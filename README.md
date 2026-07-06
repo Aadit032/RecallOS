@@ -1,159 +1,675 @@
-# Turborepo starter
+<div align="center">
 
-This Turborepo starter is maintained by the Turborepo core team.
-
-## Using this example
-
-Run the following command:
-
-```sh
-npx create-turbo@latest
+```text
+██████╗ ███████╗ ██████╗ █████╗ ██╗     ██╗      ██████╗ ███████╗
+██╔══██╗██╔════╝██╔════╝██╔══██╗██║     ██║     ██╔═══██╗██╔════╝
+██████╔╝█████╗  ██║     ███████║██║     ██║     ██║   ██║███████╗
+██╔══██╗██╔══╝  ██║     ██╔══██║██║     ██║     ██║   ██║╚════██║
+██║  ██║███████╗╚██████╗██║  ██║███████╗███████╗╚██████╔╝███████║
+╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝ ╚══════╝
 ```
 
-## What's inside?
+### 🧠 Enterprise Knowledge OS powered by AI Agents
 
-This Turborepo includes the following packages/apps:
+Store. Remember. Retrieve. Reason.
 
-### Apps and Packages
+</div>
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+---
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+# ✨ What is RecallOS?
 
-### Utilities
+RecallOS is an **AI-native enterprise knowledge operating system** that allows organizations to ingest, organize, search and reason over every piece of company knowledge.
 
-This Turborepo has some additional tools already setup for you:
+Instead of acting as another document storage platform, RecallOS builds a searchable memory for your organization using:
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
+- 📄 PDFs
+- 📊 PowerPoints
+- 🖼 Images
+- 🎥 Videos
+- 📝 Notes
+- 💬 Conversations
 
-### Build
+It combines **hybrid retrieval (BM25 + Vector Search)**, **LLM-powered reasoning**, **agentic workflows**, and **long-term organizational memory**.
 
-To build all apps and packages, run the following command:
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+# 🏗 Tech Stack
 
-```sh
-cd my-turborepo
-turbo build
+| Layer | Technology |
+|--------|------------|
+| Monorepo | Bun + Turborepo |
+| Frontend | Next.js |
+| Backend | Express |
+| Queue | Redis Streams |
+| Object Storage | MinIO (S3) |
+| Metadata | PostgreSQL |
+| Vector Search | Qdrant |
+| Lexical Search | OpenSearch (BM25) |
+| Parsing | LlamaParse |
+| Speech | Whisper |
+| Vision | Vision LLM |
+| LLM | Provider Agnostic |
+
+---
+
+# 📂 Repository Structure
+
+```text
+apps/
+    web/
+    api/
+    worker/
+
+packages/
+    ui/
+    types/
+    shared/
+    config/
 ```
 
-Without global `turbo`, use your package manager:
+---
 
-```sh
-cd my-turborepo
-npx turbo build
-bun dlx turbo build
-bun exec turbo build
+# 🚀 High Level Architecture
+
+```text
+                        +----------------------+
+                        |      Frontend        |
+                        +----------+-----------+
+                                   |
+                     Upload using Presigned URL
+                                   |
+                                   v
+                         +------------------+
+                         |      MinIO       |
+                         |  Original Files  |
+                         +------------------+
+
+                                   |
+                             Metadata Event
+                                   |
+                                   v
+
+                         +------------------+
+                         | Redis Streams    |
+                         +--------+---------+
+                                  |
+                                  |
+                     +------------+------------+
+                     |                         |
+             Ingestion Worker           Future Workers
+                     |
+                     v
+
+              +------------------+
+              |   LlamaParse     |
+              +------------------+
+                     |
+                     |
+      --------------------------------------------
+      |                |                 |
+      |                |                 |
+ Structured Text     Images          Tables
+      |                |
+      |                |
+Chunk Semantically   Vision Model
+      |                |
+      +--------+-------+
+               |
+      Chunk Enrichment
+               |
+      (summary + metadata)
+               |
+      Embedding Generation
+               |
+      +---------+-----------+
+      |                     |
+      |                     |
+      v                     v
+
+  OpenSearch          Qdrant
+   (BM25)          (Embeddings)
+
+               |
+               |
+         PostgreSQL
+(Document Metadata)
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+# 📥 Ingestion Flow
 
-```sh
-turbo build --filter=docs
+```text
+User Upload
+
+↓
+
+MinIO
+
+↓
+
+Redis Stream Event
+
+↓
+
+Worker
+
+↓
+
+LlamaParse
+
+↓
+
+Semantic Chunking
+
+↓
+
+Chunk Enrichment
+
+↓
+
+Embeddings
+
+↓
+
+Store in
+
+• PostgreSQL
+• Qdrant
+• OpenSearch
 ```
 
-Without global `turbo`:
+---
 
-```sh
-npx turbo build --filter=docs
-bun exec turbo build --filter=docs
-bun exec turbo build --filter=docs
+# 📚 Chunk Enrichment
+
+Every chunk is enriched before indexing.
+
+```yaml
+Document Summary
+
+Chunk Summary
+
+Section Title
+
+Keywords
+
+Entities
+
+Page Number
+
+Tags
+
+Document ID
+
+User ID
 ```
 
-### Develop
+This dramatically improves retrieval quality.
 
-To develop all apps and packages, run the following command:
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+# 🗃 Storage Layer
 
-```sh
-cd my-turborepo
-turbo dev
+## 🪣 MinIO
+
+Stores
+
+- Original PDFs
+- Images
+- Videos
+- PPTs
+
+---
+
+## 🐘 PostgreSQL
+
+Stores metadata.
+
+```text
+Documents
+
+id
+title
+tags
+summary
+type
+owner
+bucket_key
+status
+created_at
 ```
 
-Without global `turbo`, use your package manager:
+```text
+Chunks
 
-```sh
-cd my-turborepo
-npx turbo dev
-bun exec turbo dev
-bun exec turbo dev
+id
+document_id
+page
+section
+summary
+chunk_index
 ```
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+## 🔍 OpenSearch
 
-```sh
-turbo dev --filter=web
+Stores every chunk for lexical retrieval.
+
+```text
+Chunk
+
+↓
+
+Tokenization
+
+↓
+
+Inverted Index
+
+↓
+
+BM25 Ranking
 ```
 
-Without global `turbo`:
+Perfect for
 
-```sh
-npx turbo dev --filter=web
-bun exec turbo dev --filter=web
-bun exec turbo dev --filter=web
+- exact matches
+- APIs
+- code
+- filenames
+- keywords
+
+---
+
+## 🧠 Qdrant
+
+Stores
+
+```text
+Embedding
+
+↓
+
+Vector Search
+
+↓
+
+Cosine Similarity
 ```
 
-### Remote Caching
+Perfect for semantic search.
 
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
+---
 
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
+# 🔎 Retrieval Architecture
 
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
+```text
+                        User Query
+                             |
+                             |
+                     Query Rewriter
+                             |
+                +------------+------------+
+                |                         |
+                |                         |
+          Generate               Original Query
+         Embeddings
+                |                         |
+                |                         |
+                v                         v
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+            Qdrant                 OpenSearch
 
-```sh
-cd my-turborepo
-turbo login
+        Top 100 Results         Top 100 Results
+
+                \                 /
+
+                 \               /
+
+               Reciprocal Rank Fusion
+
+                         |
+
+                    Top 30 Chunks
+
+                         |
+
+                 Cross Encoder Reranker
+
+                         |
+
+                     Top 5 Chunks
+
+                         |
+
+                         LLM
+
+                         |
+
+                      Final Answer
 ```
 
-Without global `turbo`, use your package manager:
+---
 
-```sh
-cd my-turborepo
-npx turbo login
-bun exec turbo login
-bun exec turbo login
+# 📌 Why Hybrid Retrieval?
+
+Vector Search
+
+✅ understands meaning
+
+❌ poor at exact keywords
+
+---
+
+BM25
+
+✅ exact matching
+
+❌ no semantic understanding
+
+---
+
+RRF combines both.
+
+```text
+Vector Results
+
++
+
+BM25 Results
+
+↓
+
+RRF
+
+↓
+
+Best Combined Ranking
 ```
 
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
+---
 
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
+# 🖼 Image Retrieval
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+Images are indexed independently.
 
-```sh
-turbo link
+```text
+Image
+
+↓
+
+Vision Model
+
+↓
+
+Caption
+
+↓
+
+OCR
+
+↓
+
+Embedding
+
+↓
+
+Image Collection
 ```
 
-Without global `turbo`:
+Example
 
-```sh
-npx turbo link
-bun exec turbo link
-bun exec turbo link
+> Show me the transformer architecture diagram.
+
+Returns
+
+✅ Image
+
+✅ Caption
+
+✅ Source document
+
+---
+
+# 🎥 Video Retrieval
+
+```text
+Video
+
+↓
+
+Whisper
+
+↓
+
+Transcript
+
+↓
+
+Chunk
+
+↓
+
+Embedding
 ```
 
-## Useful Links
+Also
 
-Learn more about the power of Turborepo:
+```text
+Video
 
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+↓
+
+Extract Keyframes
+
+↓
+
+Vision Model
+
+↓
+
+Frame Captions
+
+↓
+
+Embedding
+```
+
+Allows queries like
+
+> Show the latency graph shown in the meeting.
+
+---
+
+# 🧠 Organizational Memory
+
+Every conversation can become memory.
+
+```text
+Conversation
+
+↓
+
+Extract Facts
+
+↓
+
+Importance Scoring
+
+↓
+
+Memory Chunks
+
+↓
+
+Embedding
+
+↓
+
+Memory Collection
+```
+
+Instead of storing chat history, RecallOS stores reusable knowledge.
+
+---
+
+# 🤖 Agent Architecture
+
+```text
+User Query
+
+↓
+
+Planner Agent
+
+↓
+
+Choose Tools
+
+↓
+
+Execute
+
+↓
+
+Answer
+```
+
+Available tools
+
+- 🔍 Search Knowledge Base
+- 🌐 Web Search
+- 📄 Generate Reports
+- 📊 Generate Presentations
+- 🖼 Retrieve Images
+- 🎥 Retrieve Videos
+- 🧠 Search Memory
+
+---
+
+# 🌍 Web Search
+
+If retrieval confidence is low
+
+```text
+Knowledge Search
+
+↓
+
+Low Confidence
+
+↓
+
+Agent
+
+↓
+
+Web Search
+
+↓
+
+Combine Results
+
+↓
+
+Answer
+```
+
+---
+
+# 📑 Report Generation
+
+```text
+Query
+
+↓
+
+Retrieve Context
+
+↓
+
+Planner
+
+↓
+
+Outline
+
+↓
+
+Generate Report
+
+↓
+
+Markdown / PDF / PPT
+```
+
+---
+
+# 🎯 Retrieval Citations
+
+Every response includes source chunks.
+
+```text
+Answer
+
+↓
+
+Referenced Chunks
+
+↓
+
+Page
+
+↓
+
+Document
+
+↓
+
+Highlight
+```
+
+Users can inspect exactly where every answer came from.
+
+---
+
+# 🔮 Future Roadmap
+
+- ✅ Multi-agent workflows
+- ✅ Graph-based memory
+- ✅ Knowledge graph extraction
+- ✅ Scheduled agents
+- ✅ Slack / Discord / Gmail connectors
+- ✅ Codebase indexing
+- ✅ Calendar integration
+- ✅ Organization-wide semantic memory
+- ✅ MCP support
+- ✅ Voice interface
+
+---
+
+# 💡 Design Principles
+
+- 🧠 Memory First
+- ⚡ Async Everything
+- 🔍 Hybrid Retrieval
+- 🤖 Agent Native
+- 📚 Source Grounded
+- 🧩 Modular Architecture
+- 🚀 Horizontally Scalable
+- 🔒 Enterprise Ready
+
+---
+
+<div align="center">
+
+### RecallOS
+
+**The operating system for organizational memory.**
+
+*"Your company's second brain."*
+
+</div>
