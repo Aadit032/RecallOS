@@ -6,13 +6,13 @@
   "devDependencies": {
     "@types/bun": "latest"
   },
-  "depedencies":{
-    "@repo/minio": "*"
-  },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
+    "@repo/redis-stream": "*",
+    "@repo/minio": "*",
+    "@llamaindex/llama-cloud": "^2.10.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "cors": "^2.8.6",
