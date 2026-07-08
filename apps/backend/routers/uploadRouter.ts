@@ -8,8 +8,8 @@ const uploadRouter = Router();
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME
 
-uploadRouter.post("/file", async (req, res) => {
-    const { fileName, contentType } = req.body();
+uploadRouter.post("/post-file-url", async (req, res) => {
+    const { fileName, contentType } = req.body;
 
     const key = `pdf/${fileName}-${crypto.randomUUID()}`
 
@@ -26,14 +26,14 @@ uploadRouter.post("/file", async (req, res) => {
 
 
 uploadRouter.post("/confirm", async (req, res) => {
-    const { fileName, key, userId } = req.body();
+    const { fileName, key } = req.body;
 
     try{
         await prismaClient.document.create({
             data: {
                 title: fileName,
                 ObjectKey: key,
-                userId
+                userId: req.userId!
             }
         });
 
@@ -47,8 +47,8 @@ uploadRouter.post("/confirm", async (req, res) => {
 });
 
 
-uploadRouter.get("/file", async (req, res) => {
-    const { fileName } = req.body();
+uploadRouter.post("/get-file-url", async (req, res) => {
+    const { fileName } = req.body;
 
     const key = `pdf/${fileName}-${crypto.randomUUID()}`
 

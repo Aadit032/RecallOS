@@ -29,7 +29,8 @@ authRouter.post("/signup", async (req, res) => {
             message: "User created!!"
         })
     }catch(e){
-        res.status(500).json({ message: "Singup db insert failure" })
+        console.log(e)
+        res.status(500).json({ message: "Signxup db insert failure", error: e instanceof Error? e.message : e })
     }
 })
 
@@ -52,7 +53,8 @@ authRouter.post("/signin", async (req, res) => {
             return;
         }
 
-        if(await compare(password, user.password)){
+        const valid = await compare(password, user.password)
+        if(!valid){
             res.status(401).json({
                 message: "User is not authorized."
             })
