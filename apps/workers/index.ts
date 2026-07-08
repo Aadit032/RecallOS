@@ -2,13 +2,17 @@ import { xAck, xReadGroup } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
 import runParseJob from "./parse";
 import { prismaClient } from "@repo/prisma/client";
-import chunkMarkdown from "./chunk"
+import chunkMarkdown, { type Chunk } from "./chunk"
 import { openrouterClient } from "@repo/openrouter/client"
+import { InferenceClient } from "@huggingface/inference";
 import dotenv from "dotenv"
 dotenv.config();
 
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL as string;
+
+const inferenceClient = new InferenceClient(process.env.HF_TOKEN)
 
 export const llamaClient = new LlamaCloud({
   apiKey: process.env['LLAMA_CLOUD_API_KEY'],
@@ -21,11 +25,7 @@ interface streamMessage {
     message: { documentId: string }
 }
 
-export type Tier =
-    | "fast"
-    | "cost_effective"
-    | "agentic"
-    | "agentic_plus";
+export type Tier = "fast" | "cost_effective" | "agentic" | "agentic_plus";
 
 type PricingTier = "basic" | "pro" | "max"
 
@@ -84,41 +84,77 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         }
 
         // Chunk the parsed document
-        const chunks = chunkMarkdown(markdown);
+        let chunks: Chunk[] = chunkMarkdown(markdown);
 
         console.log("Number of chunks: ", chunks.length);
         console.log("Example chunk text: ", chunks[0]!.text);
 
         // Add context to every chunk
         if(pricingTier !== "basic"){
-            for(const chunk in chunks){
 
-                const PROMPT =`<document> 
-                ${markdown}
-                </document> 
-                Here is the chunk we want to situate within the whole document 
-                <chunk> 
-                ${chunk}
-                </chunk> 
-                Please give a short succinct context to situate this 
-                chunk within the overall document for the purposes of improving search retrieval of the chunk. 
-                Answer only with the succinct context and nothing else.`
+            // ONLY DO THIS IF DOC IS SMALL, IF ITS LARGE, GET CONTEXT FROM NEARBY CHUNKS, DONT PASS THE WHOLE DOC
+
+            // chunks = await Promise.all(chunks.map(async (chunk) => {
+            //     const PROMPT =`<document> 
+            //     ${markdown}
+            //     </document> 
+            //     Here is the chunk we want to situate within the whole document 
+            //     <chunk> 
+            //     ${chunk.text}
+            //     </chunk> 
+            //     Please give a short succinct context to situate this 
+            //     chunk within the overall document for the purposes of improving search retrieval of the chunk. 
+            //     Answer only with the succinct context and nothing else.`
+            //     const response = await openrouterClient.chat.send({
+            //         chatRequest: {
+            //             model: 'openrouter/free',
+            //             messages: [{ role: 'user', content: PROMPT }],
+            //         }
+            //     })
+            //     const context = response.choices[0]!.message.content;
+            //     if(!context){
+            //         console.log("No response from openrouter for context enrichment of chunks");
+            //         return;
+            //     }
+            //     console.log(context);
+            //     return {
+            //         ...chunk,
+            //         context
+            //     }
+            // }))
+
+            for(let i = 0; i < chunks.length; i ++){
+                let chunk = chunks[i]?.text;
+
 
                 const response = await openrouterClient.chat.send({
                     chatRequest: {
                         model: 'openrouter/free',
                         messages: [{ role: 'user', content: PROMPT }],
-                    }})
+                    }
+                })
                 if(!response){
-                    console.log("No response from openrouter for context enrichment of chunks");
+                    console.log("No response from openrouter for contextual retreival on chunks");
+                    return;
                 }
-                console.log(response.choices[0]!.message.content)
+                chunk = response.choices[0]!.message.content;
+                if(!chunk){
+                    console.log("No response from openrouter for context enrichment of chunks");
+                    return;
+                }
+                console.log(chunk);
             }
-            
         }
 
+
         // get embeddings
-        
+        const embeddings = await Promise.all(chunks.map(chunk => {
+            inferenceClient.featureExtraction({
+                model: EMBEDDING_MODEL,
+                inputs: chunk.text,
+            });
+        }));
+
 
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
