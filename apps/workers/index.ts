@@ -29,17 +29,6 @@ export type Tier =
 
 type PricingTier = "basic" | "pro" | "max"
 
-const PROMPT =`<document> 
-    {{WHOLE_DOCUMENT}} 
-    </document> 
-    Here is the chunk we want to situate within the whole document 
-    <chunk> 
-    {{CHUNK_CONTENT}} 
-    </chunk> 
-    Please give a short succinct context to situate this 
-    chunk within the overall document for the purposes of improving search retrieval of the chunk. 
-    Answer only with the succinct context and nothing else.`
-
 async function workers(){    
     while(true){
         const response: streamMessage | undefined = await xReadGroup(CONSUMER_GROUP, WORKER_ID);
@@ -102,8 +91,34 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 
         // Add context to every chunk
         if(pricingTier !== "basic"){
+            for(const chunk in chunks){
 
+                const PROMPT =`<document> 
+                ${markdown}
+                </document> 
+                Here is the chunk we want to situate within the whole document 
+                <chunk> 
+                ${chunk}
+                </chunk> 
+                Please give a short succinct context to situate this 
+                chunk within the overall document for the purposes of improving search retrieval of the chunk. 
+                Answer only with the succinct context and nothing else.`
+
+                const response = await openrouterClient.chat.send({
+                    chatRequest: {
+                        model: 'openrouter/free',
+                        messages: [{ role: 'user', content: PROMPT }],
+                    }})
+                if(!response){
+                    console.log("No response from openrouter for context enrichment of chunks");
+                }
+                console.log(response.choices[0]!.message.content)
+            }
+            
         }
+
+        // get embeddings
+        
 
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
