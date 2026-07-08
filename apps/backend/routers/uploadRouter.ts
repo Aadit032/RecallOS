@@ -3,7 +3,7 @@ import { s3 } from "@repo/minio/client"
 import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { prismaClient } from "@repo/prisma/client"
-import { xAddFiles } from "@repo/redis-stream/client"
+import { xAdd } from "@repo/redis-stream/client"
 
 const uploadRouter = Router();
 
@@ -50,7 +50,7 @@ uploadRouter.post("/confirm", async (req, res) => {
             }
         });
         
-        const messageId = await xAddFiles(document.id);
+        const messageId = await xAdd(document.id);
         if(!messageId) return res.status(500).json({ message: "The file was not pushed on the queue." });
 
         res.status(200).json({ message: "Server confirmed the upload!!" });

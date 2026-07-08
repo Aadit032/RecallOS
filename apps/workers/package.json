@@ -11,6 +11,7 @@
     "start": "bun run index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1081.0",
     "@llamaindex/llama-cloud": "^2.10.0",
     "@repo/minio": "*",
     "@repo/prisma": "*",

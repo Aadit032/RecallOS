@@ -22,34 +22,38 @@ try {
     }
 }
 
-export async function xAddFiles(documentId: string): Promise<string>{
+export async function xAdd(documentId: string): Promise<string>{
     const res = await redisClient.xAdd(STREAM_NAME, '*', { documentId });
     return res;
 }
 
-type ResponseType = { documentId: string };
+type streamMessage = { 
+    id: string,
+    message: {
+        documentId: string 
+    }
+};
 
-export async function xReadGroup(consumerGroup: string, workerId: string): Promise<ResponseType | undefined> {
+export async function xReadGroup(consumerGroup: string, workerId: string): Promise<streamMessage | undefined> {
     const res = await redisClient.xReadGroup(
-      consumerGroup, workerId, {
-      key: STREAM_NAME,
-      id: ">"
-   }, {
-      'COUNT': 1,
-      'BLOCK': 0
-   }
-   )
+        consumerGroup, workerId, [{
+            key: STREAM_NAME,
+            id: ">"
+        }], {
+        'COUNT': 1,
+        'BLOCK': 5000
+    })
 
     if (!res){
         console.log("No response from the xReadGroup command");
         return undefined;
     }
 
-   let documents: ResponseType = res[0]!.messages[0];
+   let documents: streamMessage = res[0]!.messages;
    return documents;
 }
 
-async function xAck(consumerGroup: string, eventId: string) {
+export async function xAck(consumerGroup: string, eventId: string):Promise<number> {
    const res = await redisClient.xAck(STREAM_NAME, consumerGroup, eventId);
    return res;
 }
