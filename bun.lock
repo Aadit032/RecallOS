@@ -65,6 +65,7 @@
     "apps/workers": {
       "name": "workers",
       "dependencies": {
+        "@llamaindex/llama-cloud": "^2.10.0",
         "@repo/minio": "*",
         "@repo/prisma": "*",
         "@repo/redis-stream": "*",

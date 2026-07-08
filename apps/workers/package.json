@@ -11,9 +11,10 @@
     "start": "bun run index.ts"
   },
   "dependencies": {
+    "@llamaindex/llama-cloud": "^2.10.0",
+    "@repo/minio": "*",
     "@repo/prisma": "*",
-    "@repo/redis-stream": "*",
-    "@repo/minio": "*"
+    "@repo/redis-stream": "*"
   },
   "peerDependencies": {
     "typescript": "^5"
