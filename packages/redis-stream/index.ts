@@ -13,9 +13,9 @@ export async function xAddFiles(documentId: string): Promise<string>{
     return res;
 }
 
-// export async function xReadGroup(consumerGroup: string, workerId: string) {
+export async function xReadGroup(consumerGroup: string, workerId: string) {
 
-// }
+}
 
 // export async function xAck(){
 

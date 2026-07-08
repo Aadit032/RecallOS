@@ -1,0 +1,21 @@
+{
+  "name": "workers",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "scripts": {
+    "dev": "bun run index.ts",
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@repo/prisma": "*",
+    "@repo/redis-stream": "*",
+    "@repo/minio": "*"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
