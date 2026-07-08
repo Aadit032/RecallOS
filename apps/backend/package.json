@@ -10,9 +10,11 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@repo/redis-stream": "*",
-    "@repo/minio": "*",
+    "@aws-sdk/client-s3": "^3.1080.0",
+    "@aws-sdk/s3-request-presigner": "^3.1080.0",
     "@llamaindex/llama-cloud": "^2.10.0",
+    "@repo/minio": "*",
+    "@repo/redis-stream": "*",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "cors": "^2.8.6",
