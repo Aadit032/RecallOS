@@ -29,6 +29,7 @@ export default async function runParseJob(key: string, tier: Tier): Promise<stri
 
     if(getJob.job.status === "FAILED"){
         console.log("Parsing failed. Try again.");
+        return null;
     }
 
     if(!getJob.markdown_full){

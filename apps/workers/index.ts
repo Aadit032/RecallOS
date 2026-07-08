@@ -2,6 +2,7 @@ import { xAck, xReadGroup } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
 import runParseJob from "./parse";
 import { prismaClient } from "@repo/prisma/client";
+import chunkMarkdown from "./chunk"
 import dotenv from "dotenv"
 dotenv.config();
 
@@ -42,7 +43,9 @@ export type Tier =
     | "agentic"
     | "agentic_plus";
 
-async function processDocuments(streamMessage: streamMessage){
+type PricingTier = "basic" | "pro" | "max"
+
+async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
     // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
     try{
         const document = await prismaClient.document.update({
@@ -50,18 +53,45 @@ async function processDocuments(streamMessage: streamMessage){
             data: { status: "PROCESSING" },
             select: { ObjectKey: true }
         });
-        if(!document){
-            console.log("No document found for that docuemntId");
+        
+        // Parse the document into markdown
+        let markdown: string | null = null;
+        let tier: Tier;
+        let ContextualRetrieval: Boolean = false;
+
+        if(pricingTier == "basic") {
+            tier = "fast";
+        }else if(pricingTier == "max"){
+            tier = "cost_effective";
+        }else{
+            tier = "agentic_plus";
+        }
+
+        for(let i = 0; i < MAX_RETRIES; i++){
+            markdown = await runParseJob(document.ObjectKey, tier);
+            if (markdown) {
+                break;
+            }
+            console.log(`Attempt ${i + 1} failed. Retrying...`);
+        }
+        if(!markdown){
+            await prismaClient.document.update({
+                where: { id: streamMessage.message.documentId },
+                data: { status: "FAILED" },
+            });
+            console.log("Max attempts reached.");
             return;
         }
-        
-        for(let i = 0; i < MAX_RETRIES; i++){
-            const markdown = await runParseJob(document.ObjectKey, "fast");
-            if(!markdown && i < MAX_RETRIES){
-                console.log(`Attempt: ${i} failed. Trying again`)
-            }else if(!markdown && i == MAX_RETRIES){
-                console.log("Max attempts reached. Cant parse teh document");
-            }
+
+        // Chunk the parsed document
+        const chunks = chunkMarkdown(markdown);
+
+        console.log("Number of chunks: ", chunks.length);
+        console.log("Example chunk text: ", chunks[0]!.text);
+
+        // Add context to every chunk
+        if(pricingTier !== "basic"){
+            
         }
 
     }catch(e){
