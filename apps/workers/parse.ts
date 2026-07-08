@@ -3,23 +3,12 @@ import  { GetObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { llamaClient, type Tier } from "./index";
 import dotenv from "dotenv"
+import type { ParsingCreateResponse, ParsingGetResponse } from "@llamaindex/llama-cloud/resources";
 dotenv.config();
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME as string;
 
-interface ParsingCreateResponse {
-  id: string;
-  project_id: string;
-  status: 'CANCELLED' | 'COMPLETED' | 'FAILED' | 'PENDING' | 'RUNNING';
-  created_at?: string | null;
-  error_message?: string | null;
-  name?: string | null;
-  tier?: string | null;
-  updated_at?: string | null;
-  user_metadata?: { [key: string]: string } | null;
-}
-
-export default async function parseDocument(key: string, tier: Tier): Promise<ParsingCreateResponse>{
+export default async function runParseJob(key: string, tier: Tier): Promise<string | null>{
     const command = new GetObjectCommand({
         Bucket: AWS_BUCKET_NAME,
         Key: key,
@@ -27,7 +16,25 @@ export default async function parseDocument(key: string, tier: Tier): Promise<Pa
     
     const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
 
-    const parsed = await llamaClient.parsing.create({ tier, version: 'latest', source_url: presignedUrl });
+    const createJob: ParsingCreateResponse = await llamaClient.parsing.create({ tier, version: 'latest', source_url: presignedUrl });
 
-    return parsed
+    let getJob: ParsingGetResponse = await llamaClient.parsing.get(createJob.id, {expand: ["markdown"]});
+    while(getJob.job.status !== "COMPLETED" && getJob.job.status !== "FAILED"){
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        getJob = await llamaClient.parsing.get(createJob.id, {
+            expand: ["markdown"],
+        });
+    };
+
+    if(getJob.job.status === "FAILED"){
+        console.log("Parsing failed. Try again.");
+    }
+
+    if(!getJob.markdown_full){
+        console.log("Cant get the markdown from the completed job");
+        return null;
+    }
+
+    return getJob.markdown_full
 }

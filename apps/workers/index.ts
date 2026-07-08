@@ -1,6 +1,6 @@
 import { xAck, xReadGroup } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
-import parseDocument from "./parse";
+import runParseJob from "./parse";
 import { prismaClient } from "@repo/prisma/client";
 import dotenv from "dotenv"
 dotenv.config();
@@ -11,6 +11,8 @@ const WORKER_ID = process.env.WORKER_ID as string;
 export const llamaClient = new LlamaCloud({
   apiKey: process.env['LLAMA_CLOUD_API_KEY'],
 });
+
+const MAX_RETRIES = 3;
 
 interface streamMessage {
     id: string,
@@ -53,8 +55,14 @@ async function processDocuments(streamMessage: streamMessage){
             return;
         }
         
-        const parsed = await parseDocument(document.ObjectKey, "fast");
-        
+        for(let i = 0; i < MAX_RETRIES; i++){
+            const markdown = await runParseJob(document.ObjectKey, "fast");
+            if(!markdown && i < MAX_RETRIES){
+                console.log(`Attempt: ${i} failed. Trying again`)
+            }else if(!markdown && i == MAX_RETRIES){
+                console.log("Max attempts reached. Cant parse teh document");
+            }
+        }
 
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
