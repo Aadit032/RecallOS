@@ -1,14 +1,12 @@
 import { xAck, xReadGroup } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
-import { s3 } from "@repo/minio/client";
-import  { GetObjectCommand } from "@aws-sdk/client-s3"
+import parseDocument from "./parse";
 import { prismaClient } from "@repo/prisma/client";
 import dotenv from "dotenv"
 dotenv.config();
 
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
-const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME as string;
 
 export const llamaClient = new LlamaCloud({
   apiKey: process.env['LLAMA_CLOUD_API_KEY'],
@@ -19,8 +17,7 @@ interface streamMessage {
     message: { documentId: string }
 }
 
-async function workers(){
-    
+async function workers(){    
     while(true){
         const response: streamMessage | undefined = await xReadGroup(CONSUMER_GROUP, WORKER_ID);
         if(!response){
@@ -34,13 +31,17 @@ async function workers(){
         }catch(e){
             console.log("Error: ", e instanceof Error ? e.message : e);
         }
-
     }
 }
 
-async function processDocuments(streamMessage: streamMessage){
-    // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index => xAck
+export type Tier =
+    | "fast"
+    | "cost_effective"
+    | "agentic"
+    | "agentic_plus";
 
+async function processDocuments(streamMessage: streamMessage){
+    // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
     try{
         const document = await prismaClient.document.update({
             where: { id: streamMessage.message.documentId },
@@ -51,18 +52,11 @@ async function processDocuments(streamMessage: streamMessage){
             console.log("No document found for that docuemntId");
             return;
         }
-    
-        const response = await s3.send(new GetObjectCommand({
-            Bucket: AWS_BUCKET_NAME,
-            Key: document.ObjectKey
-        }));
-        if(!response){
-            console.log("No response from the s3 bucket.");
-        }
-
+        
+        const parsed = await parseDocument(document.ObjectKey, "fast");
         
 
     }catch(e){
-        console.log("failed processing documents. Error: ", e instanceof Error? e.message : e);
+        console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
     }
 }
