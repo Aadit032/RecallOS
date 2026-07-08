@@ -16,7 +16,11 @@ export default async function runParseJob(key: string, tier: Tier): Promise<stri
     
     const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
 
-    const createJob: ParsingCreateResponse = await llamaClient.parsing.create({ tier, version: 'latest', source_url: presignedUrl });
+    const createJob: ParsingCreateResponse = await llamaClient.parsing.create({ 
+        tier, 
+        version: 'latest', 
+        source_url: presignedUrl 
+    });
 
     let getJob: ParsingGetResponse = await llamaClient.parsing.get(createJob.id, {expand: ["markdown"]});
     while(getJob.job.status !== "COMPLETED" && getJob.job.status !== "FAILED"){
