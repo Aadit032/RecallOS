@@ -1,9 +1,9 @@
-// import express from 'express';
 import cors from "cors";
 import uploadRouter from "./routers/uploadRouter.ts"
-import Router from "express"
+import authRouter from "./routers/authRouter.ts"
+import middleware from "./middleware.ts";
+import express from "express"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
-import { redisClient } from "@repo/redis-stream/client"
 import dotenv from "dotenv"
 dotenv.config()
 
@@ -13,12 +13,12 @@ export const client = new LlamaCloud({
   apiKey: process.env['LLAMA_CLOUD_API_KEY'],
 });
 
-const router = Router();
-router.use(cors());
+const app = express();
+app.use(cors());
 
-router.use("/api/v1/upload", uploadRouter)
+app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/upload", middleware, uploadRouter)
 
-
-router.listen(PORT, () => {
-    `Server is listening on ${PORT}`
+app.listen(PORT, () => {
+  console.log(`Server is listening on ${PORT}`);
 });
