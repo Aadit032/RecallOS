@@ -193,6 +193,11 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         // get embeddings + store in qdrant + bm25 idx
         await upsertChunks(chunks);
 
+        await prismaClient.document.update({
+            where: { id: streamMessage.message.documentId },
+            data: { status: "COMPLETED" }
+        });
+
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
     }

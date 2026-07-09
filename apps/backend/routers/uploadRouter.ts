@@ -53,7 +53,7 @@ uploadRouter.post("/confirm", async (req, res) => {
         const messageId = await xAdd(document.id);
         if(!messageId) return res.status(500).json({ message: "The file was not pushed on the queue." });
 
-        res.status(200).json({ message: "Server confirmed the upload!!" });
+        res.status(200).json({ message: "Server confirmed the upload!!", documentId: document.id });
     }catch(e){
         res.status(500).json({
             message: "Server failed to confirm the upload"
@@ -64,17 +64,24 @@ uploadRouter.post("/confirm", async (req, res) => {
 
 
 uploadRouter.post("/get-file-url", async (req, res) => {
-    const { fileName } = req.body;
+    const { documentId } = req.body;
 
-    const key = `pdf/${fileName}-${crypto.randomUUID()}`
+    const document = await prismaClient.document.findUnique({
+        where: { id: documentId },
+        select: { ObjectKey: true }
+    });
+
+    if (!document) {
+        res.status(404).json({ message: "Document not found" });
+        return;
+    }
 
     const command = new GetObjectCommand({
         Bucket: AWS_BUCKET_NAME,
-        Key: key
+        Key: document.ObjectKey
     });
-    
-    const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
 
+    const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
     res.status(200).json({ presignedUrl });
 });
 
