@@ -4,20 +4,23 @@ import runParseJob from "./parse";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "./chunk"
 import { openrouterClient } from "@repo/openrouter/client"
-import { InferenceClient } from "@huggingface/inference";
+import { FlagEmbedding, EmbeddingModel } from "fastembed";
+import { qdrantClient } from "@repo/qdrant/client";
+import { v4 as uuidv4 } from "uuid"
 import dotenv from "dotenv"
 dotenv.config();
 
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL as string;
 const CONTEXT_MODEL = process.env.CONTEXT_MODEL as string;
+const COLLECTION = process.env.COLLECTION as string;
 
-const inferenceClient = new InferenceClient(process.env.HF_TOKEN)
+// other options: BGESmallEN (384-dim, faster), BGELargeEN (1024-dim, better quality)
+const denseModel = await FlagEmbedding.init({ model: EmbeddingModel.BGEBaseEN }); // 768-dim
 
-export const llamaClient = new LlamaCloud({
-  apiKey: process.env['LLAMA_CLOUD_API_KEY'],
-});
+const bm25Model = await FlagEmbedding.init({ model: EmbeddingModel.CUSTOM });
+
+export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
 
 const MAX_RETRIES = 3;
 
@@ -42,7 +45,7 @@ async function workers(){
             await processDocuments(response, "basic");
             await xAck(CONSUMER_GROUP, response.id);
         }catch(e){
-            console.log("Error: ", e instanceof Error ? e.message : e);
+            console.log("Error while running workers: ", e instanceof Error ? e.message : e);
         }
     }
 }
@@ -123,8 +126,49 @@ async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<C
     }
 }
 
+async function getDenseVectors(texts: string[]): Promise<number[][]> {
+    const vectors: number[][] = [];
+    for await (const batch of denseModel.embed(texts, 32)) {
+        vectors.push(...batch);
+    }
+    return vectors;
+}
+
+async function getSparseVectors(texts: string[]) {
+    const embeddings = [];
+    for await (const batch of bm25Model.embed(texts, 32)) { // batchSize = 32
+        embeddings.push(...batch); // each item: { indices: number[], values: number[] }
+    }
+    return embeddings;
+}
+
+async function upsertChunks(chunks: Chunk[]){
+    const texts = chunks.map(chunk => chunk.text)
+
+    try{
+        const sparseVectors = await getSparseVectors(texts);
+        const embeddings = await getDenseVectors(texts);
+    
+        const points = chunks.map((chunk, i) => ({
+            id: uuidv4(),
+            vector: {
+                dense: embeddings[i],
+                bm25: sparseVectors[i],
+            },
+            payload: {
+                text: chunk.text,
+                documentId: chunk.id,
+            }
+        }));
+    
+        await qdrantClient.upsert(COLLECTION, { wait: true, points });
+    }catch(e){
+        console.log("Error upserting chunks: ", e instanceof Error ? e.message : e);
+    }
+}
+
+// parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
 async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
-    // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
     try{
         const document = await prismaClient.document.update({
             where: { id: streamMessage.message.documentId },
@@ -167,18 +211,14 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
             chunks = await contextualRetrieval(markdown, chunks);
         }
 
-        // get embeddings
-        const embeddings = await Promise.all(chunks.map(chunk => {
-            return inferenceClient.featureExtraction({
-                model: EMBEDDING_MODEL,
-                inputs: chunk.text,
-            });
-        }));
-
-        // store in qdrant + bm25 idx
-
+        // get embeddings + store in qdrant + bm25 idx
+        await upsertChunks(chunks);
 
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
     }
 }
+
+
+// ========== RUN WORKERS ============
+workers();
