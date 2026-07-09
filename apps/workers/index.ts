@@ -48,7 +48,7 @@ async function workers(){
 }
 
 async function getContextChunks(chunks: Chunk[], full_doc: string): Promise<Chunk[]>{
-    chunks = await Promise.all(chunks.map(async (chunk) => {
+    const contextualized = await Promise.all(chunks.map(async (chunk) => {
             const CONTEXT_PROMPT =`<document> 
                 ${full_doc}
                 </document> 
@@ -66,24 +66,23 @@ async function getContextChunks(chunks: Chunk[], full_doc: string): Promise<Chun
                     messages: [{ role: 'user', content: CONTEXT_PROMPT }],
                 }
             })
-            if(!response){
-                console.log("No response from openrouter for contextual retreival on chunks");
+            const content = response?.choices[0]?.message.content;
+            if (!content) {
+                console.log("No response from openrouter for contextual retrieval on chunk; keeping original text.");
                 return chunk;
             }
-            chunk.text = response.choices[0]!.message.content;
-            console.log(chunk);
-
-            return chunk;
-        }))
-
-    return chunks;
+    
+            return { ...chunk, text: content };
+        }));
+ 
+    return contextualized;
 }
 
 async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<Chunk[]>{
-    const isSmall = full_doc.length > 5000 ? true : false;
+    const isSmall = full_doc.length < 5000 ? true : false;
 
     if(isSmall){
-        getContextChunks(chunks, full_doc);
+        return await getContextChunks(chunks, full_doc);
     }else{
         const SUMMARY_PROMPT = `You are a precise document summarizer. Given the document below, produce a summary that:
             1. Captures the core argument/purpose in 1-2 sentences (TL;DR)
@@ -115,13 +114,14 @@ async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<C
             }
         });
         const summary = res.choices[0]!.message.content;
+        if (!summary) {
+            console.log("No summary returned from openrouter; falling back to full document for context.");
+            return await getContextChunks(chunks, full_doc);
+        }
 
-        getContextChunks(chunks, summary);
-
+        return await getContextChunks(chunks, summary);
     }
-    return chunks;
 }
-
 
 async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
     // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
@@ -164,18 +164,19 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 
         // Add context to every chunk
         if(pricingTier !== "basic"){
-            const contextChunks: Chunk[] = await contextualRetrieval(markdown, chunks);
+            chunks = await contextualRetrieval(markdown, chunks);
         }
 
 
         // get embeddings
         const embeddings = await Promise.all(chunks.map(chunk => {
-            inferenceClient.featureExtraction({
+            return inferenceClient.featureExtraction({
                 model: EMBEDDING_MODEL,
                 inputs: chunk.text,
             });
         }));
 
+        // store in qdrant + bm25 idx
 
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
