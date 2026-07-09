@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import localFont from "next/font/local"
 
 import { ThemeProvider } from "@/components/theme-provider"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 import "./globals.css"
 
@@ -26,17 +27,19 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans min-h-screen`}
-      >
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable}`}
+    >
+      <body className="font-sans min-h-screen antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <TooltipProvider>{children}</TooltipProvider>
         </ThemeProvider>
       </body>
     </html>

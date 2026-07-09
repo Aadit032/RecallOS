@@ -85,6 +85,33 @@ uploadRouter.post("/confirm", async (req, res) => {
 });
 
 
+uploadRouter.get("/documents", async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+    }
+
+    try {
+        const documents = await prismaClient.document.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            select: {
+                id: true,
+                title: true,
+                status: true,
+                ObjectKey: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+        });
+        res.status(200).json({ documents });
+    } catch (e) {
+        console.log("Failed to list documents: ", e);
+        res.status(500).json({ message: "Failed to list documents" });
+    }
+});
+
 uploadRouter.post("/get-file-url", async (req, res) => {
     const { documentId } = req.body;
     if (!documentId) {
