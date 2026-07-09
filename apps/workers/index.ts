@@ -11,6 +11,7 @@ dotenv.config();
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL as string;
+const CONTEXT_MODEL = process.env.CONTEXT_MODEL as string;
 
 const inferenceClient = new InferenceClient(process.env.HF_TOKEN)
 
@@ -46,6 +47,82 @@ async function workers(){
     }
 }
 
+async function getContextChunks(chunks: Chunk[], full_doc: string): Promise<Chunk[]>{
+    chunks = await Promise.all(chunks.map(async (chunk) => {
+            const CONTEXT_PROMPT =`<document> 
+                ${full_doc}
+                </document> 
+                Here is the chunk we want to situate within the whole document 
+                <chunk> 
+                ${chunk.text}
+                </chunk> 
+                Please give a short succinct context to situate this 
+                chunk within the overall document for the purposes of improving search retrieval of the chunk. 
+                Answer only with the succinct context and nothing else.`
+
+            const response = await openrouterClient.chat.send({
+                chatRequest: {
+                    model: CONTEXT_MODEL,
+                    messages: [{ role: 'user', content: CONTEXT_PROMPT }],
+                }
+            })
+            if(!response){
+                console.log("No response from openrouter for contextual retreival on chunks");
+                return chunk;
+            }
+            chunk.text = response.choices[0]!.message.content;
+            console.log(chunk);
+
+            return chunk;
+        }))
+
+    return chunks;
+}
+
+async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<Chunk[]>{
+    const isSmall = full_doc.length > 5000 ? true : false;
+
+    if(isSmall){
+        getContextChunks(chunks, full_doc);
+    }else{
+        const SUMMARY_PROMPT = `You are a precise document summarizer. Given the document below, produce a summary that:
+            1. Captures the core argument/purpose in 1-2 sentences (TL;DR)
+            2. Lists 3-7 key points as bullets, in order of importance
+            3. Preserves any critical numbers, dates, names, or decisions verbatim
+            4. Flags open questions, risks, or action items separately if present
+            5. Omits filler, repetition, and examples unless they carry unique information
+
+            Constraints:
+            - Do not add information not in the source
+            - Do not editorialize or add opinions
+            - Match the summary length to content density, not document length (target: {N} words / {N}% of original)
+            - If the document is ambiguous or contradictory, note it rather than resolving it silently
+
+            Output format:
+            **TL;DR:** ...
+            **Key Points:**
+            - ...
+            **Action Items / Open Questions:** (omit if none)
+            - ...
+
+            Document:
+            ${full_doc}`
+
+        const res = await openrouterClient.chat.send({
+            chatRequest: {
+                model: CONTEXT_MODEL,
+                messages: [{ role: 'user', content: SUMMARY_PROMPT }],
+            }
+        });
+        const summary = res.choices[0]!.message.content;
+
+        getContextChunks(chunks, summary);
+
+    }
+    return chunks;
+}
+
+
 async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
     // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
     try{
@@ -59,13 +136,9 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         let markdown: string | null = null;
         let tier: Tier;
 
-        if(pricingTier == "basic") {
-            tier = "fast";
-        }else if(pricingTier == "max"){
-            tier = "cost_effective";
-        }else{
-            tier = "agentic_plus";
-        }
+        if(pricingTier == "basic") tier = "fast"; 
+        else if(pricingTier == "max") tier = "cost_effective";
+        else tier = "agentic_plus";
 
         for(let i = 0; i < MAX_RETRIES; i++){
             markdown = await runParseJob(document.ObjectKey, tier);
@@ -91,59 +164,7 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 
         // Add context to every chunk
         if(pricingTier !== "basic"){
-
-            // ONLY DO THIS IF DOC IS SMALL, IF ITS LARGE, GET CONTEXT FROM NEARBY CHUNKS, DONT PASS THE WHOLE DOC
-
-            // chunks = await Promise.all(chunks.map(async (chunk) => {
-            //     const PROMPT =`<document> 
-            //     ${markdown}
-            //     </document> 
-            //     Here is the chunk we want to situate within the whole document 
-            //     <chunk> 
-            //     ${chunk.text}
-            //     </chunk> 
-            //     Please give a short succinct context to situate this 
-            //     chunk within the overall document for the purposes of improving search retrieval of the chunk. 
-            //     Answer only with the succinct context and nothing else.`
-            //     const response = await openrouterClient.chat.send({
-            //         chatRequest: {
-            //             model: 'openrouter/free',
-            //             messages: [{ role: 'user', content: PROMPT }],
-            //         }
-            //     })
-            //     const context = response.choices[0]!.message.content;
-            //     if(!context){
-            //         console.log("No response from openrouter for context enrichment of chunks");
-            //         return;
-            //     }
-            //     console.log(context);
-            //     return {
-            //         ...chunk,
-            //         context
-            //     }
-            // }))
-
-            for(let i = 0; i < chunks.length; i ++){
-                let chunk = chunks[i]?.text;
-
-
-                const response = await openrouterClient.chat.send({
-                    chatRequest: {
-                        model: 'openrouter/free',
-                        messages: [{ role: 'user', content: PROMPT }],
-                    }
-                })
-                if(!response){
-                    console.log("No response from openrouter for contextual retreival on chunks");
-                    return;
-                }
-                chunk = response.choices[0]!.message.content;
-                if(!chunk){
-                    console.log("No response from openrouter for context enrichment of chunks");
-                    return;
-                }
-                console.log(chunk);
-            }
+            const contextChunks: Chunk[] = await contextualRetrieval(markdown, chunks);
         }
 
 
