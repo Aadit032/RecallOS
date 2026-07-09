@@ -17,7 +17,7 @@ const COLLECTION = process.env.COLLECTION as string;
 
 export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 10;
 
 interface streamMessage {
     id: string,
@@ -165,17 +165,25 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         else if(pricingTier == "max") tier = "agentic";
         else tier = "agentic_plus";
 
-        const createJob = await createParseJob(document.ObjectKey, tier, "dev");
-        if(!createJob) {
-            console.log("Failed to create a parsing job...");
-            return;
-        }
         for(let i = 0; i < MAX_RETRIES; i++){
-            markdown = await getFinishedJob(createJob);
-            if (markdown) {
-                break;
+            try{
+                const job = await createParseJob(document.ObjectKey, tier, "dev");
+                if(!job) {
+                    console.log("Failed to create a parsing job...");
+                    return;
+                }
+
+                markdown = await getFinishedJob(job);
+
+                if (markdown) break;
+                else if(typeof markdown == null) break;
+
+                console.log(`Attempt ${i + 1} failed. Retrying...`);
+
+                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+            }catch(e){
+                console.log("Error while getting parsed response from Llama: ", e);
             }
-            console.log(`Attempt ${i + 1} failed. Retrying...`);
         }
         if(!markdown){
             await prismaClient.document.update({

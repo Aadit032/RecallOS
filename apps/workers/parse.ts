@@ -77,13 +77,13 @@ export async function createParseJob(key: string, tier: Tier, env: env): Promise
 }
 
 export async function getFinishedJob(createJob: ParsingCreateResponse){
+
     let getJob: ParsingGetResponse = await llamaClient.parsing.get(createJob.id, {expand: ["markdown"]});
+    
     while(getJob.job.status !== "COMPLETED" && getJob.job.status !== "FAILED"){
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        getJob = await llamaClient.parsing.get(createJob.id, {
-            expand: ["markdown"],
-        });
+        getJob = await llamaClient.parsing.get(createJob.id, { expand: ["markdown"] });
     };
 
     if(getJob.job.status === "FAILED"){
