@@ -18,9 +18,15 @@ export default function Home() {
         try {
             // 1. Ask backend for a presigned PUT url
             setStatus("Requesting upload URL...");
+            const token = localStorage.getItem("token");
+            console.log("logging token before /post-file-url: " + token)
+
             const { data: { presignedUrl, key } } = await axios.post(
                 `${API_BASE}/post-file-url`,
-                { fileName: file.name, contentType: file.type }
+                { fileName: file.name, contentType: file.type },
+                {headers: {
+                    "Authorization": "Bearer " + token
+                }}
             );
 
             // 2. Upload the raw file bytes directly to storage
@@ -33,12 +39,14 @@ export default function Home() {
             if(res.status == 200){
                 // 3. Tell backend the upload finished, so it can verify + queue processing
                 setStatus("Confirming upload...");
-                console.log(`file size: ${file.size}`)
+                console.log(`file size: ${file.name} | key: ${key} | size: ${file.size}`)
                 const { data } = await axios.post(`${API_BASE}/confirm`, {
                     fileName: file.name,
                     key,
                     size: file.size,
-                });
+                }, {headers: {
+                    "Authorization": "Bearer " + token
+                }});
                 setDocumentId(data.documentId);
                 setStatus("Upload complete.");
             }else{
@@ -54,7 +62,10 @@ export default function Home() {
 
     const handleDownload = async () => {
         if (!documentId) return;
-        const { data } = await axios.post(`${API_BASE}/get-file-url`, { documentId });
+        const token = localStorage.getItem("token");
+        const { data } = await axios.post(`${API_BASE}/get-file-url`, { documentId }, { headers: {
+                    "Authorization": "Bearer " + token
+                }});
         window.open(data.presignedUrl, "_blank");
     };
 

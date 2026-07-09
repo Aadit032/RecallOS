@@ -20,7 +20,7 @@ export default function Signin(){
             console.log(res.data.token);
             const token = res.data.token
 
-            localStorage.setItem(token, token);
+            localStorage.setItem("token", token);
             
             router.push("/dashboard");
         }catch(e){

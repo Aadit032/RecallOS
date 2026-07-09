@@ -32,8 +32,10 @@ uploadRouter.post("/post-file-url", async (req, res) => {
 
 uploadRouter.post("/confirm", async (req, res) => {
     const { fileName, key, size } = req.body;
-    // const size = Number(req.body.size);
-    if (!key || !fileName || size === undefined) {
+    const userId = req.userId
+    
+    console.log("userId: " + userId)
+    if (!key || !fileName || !userId || !size) {
         res.status(400).json({ message: "Missing required fields: fileName, key, size" });
         return;
     }
@@ -55,7 +57,7 @@ uploadRouter.post("/confirm", async (req, res) => {
             data: {
                 title: fileName,
                 ObjectKey: key,
-                userId: req.userId!,
+                userId: userId,
                 status: "QUEUED"
             }
         });
@@ -65,7 +67,7 @@ uploadRouter.post("/confirm", async (req, res) => {
 
         res.status(200).json({ message: "Server confirmed the upload!!", documentId: document.id });
     }catch(e){
-        console.log("Server failed to confirm the upload");
+        console.log("Server failed to confirm the upload" + e);
 
         try {
             await prismaClient.document.update({
@@ -76,7 +78,7 @@ uploadRouter.post("/confirm", async (req, res) => {
             console.log("Also failed to record FAILED status:", innerErr);
         }
         
-        res.status(500).json({ message: "Server failed to confirm the upload" });
+        res.status(500).json({ message: "Server failed to confirm the upload" + e });
     }
 
 });
@@ -89,23 +91,28 @@ uploadRouter.post("/get-file-url", async (req, res) => {
         return;
     }
 
-    const document = await prismaClient.document.findUnique({
-        where: { id: documentId },
-        select: { ObjectKey: true }
-    });
+    try{
+        const document = await prismaClient.document.findUnique({
+            where: { id: documentId },
+            select: { ObjectKey: true }
+        });
 
-    if (!document) {
-        res.status(404).json({ message: "Document not found" });
-        return;
+        if (!document) {
+            res.status(404).json({ message: "Document not found" });
+            return;
+        }
+
+        const command = new GetObjectCommand({
+            Bucket: AWS_BUCKET_NAME,
+            Key: document.ObjectKey
+        });
+
+        const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
+        res.status(200).json({ presignedUrl });
+    }catch(e){
+        console.log("Server error while getting presigned url for downloading." + e)
+        res.status(500).json({ message: "Server error while getting presigned url for downloading." + e })
     }
-
-    const command = new GetObjectCommand({
-        Bucket: AWS_BUCKET_NAME,
-        Key: document.ObjectKey
-    });
-
-    const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
-    res.status(200).json({ presignedUrl });
 });
 
 

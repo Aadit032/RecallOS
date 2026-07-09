@@ -12,16 +12,19 @@ declare global {
 const JWT_SECRET = process.env.JWT_SECRET as string;
 
 export default async function middleware(req: Request, res: Response, next: NextFunction){
-    const authHeaders = req.headers["authorization"];
+   const authHeaders = req.headers["authorization"];
 
-    const token = authHeaders?.split("Bearer ")[1];
-    if(!token){
-        res.status(404).json({ message: "Missing token in request" });
-        return;
-    }
+   const token = authHeaders?.split("Bearer ")[1];
+   console.log("token at middleware: " + token);
 
-    try {
+   if(!token){
+      res.status(404).json({ message: "Missing token in request" });
+      return;
+   }
+
+   try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as jwt.JwtPayload;
+      
       req.userId = decoded.id;
       next();
    } catch (e) {

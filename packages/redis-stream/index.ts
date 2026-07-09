@@ -22,9 +22,14 @@ try {
     }
 }
 
-export async function xAdd(documentId: string): Promise<string>{
-    const res = await redisClient.xAdd(STREAM_NAME, '*', { documentId });
-    return res;
+export async function xAdd(documentId: string): Promise<string | null>{
+    try{
+        const res = await redisClient.xAdd(STREAM_NAME, '*', { documentId });
+        return res;
+    }catch(e){
+        console.log("xAdd to stream failed." + e);
+        return null;
+    }
 }
 
 type streamMessage = { 
@@ -35,25 +40,34 @@ type streamMessage = {
 };
 
 export async function xReadGroup(consumerGroup: string, workerId: string): Promise<streamMessage | undefined> {
-    const res = await redisClient.xReadGroup(
-        consumerGroup, workerId, [{
-            key: STREAM_NAME,
-            id: ">"
-        }], {
-        'COUNT': 1,
-        'BLOCK': 5000
-    })
+    try{
+        const res = await redisClient.xReadGroup(
+            consumerGroup, workerId, [{
+                key: STREAM_NAME,
+                id: ">"
+            }], {
+            'COUNT': 1,
+            'BLOCK': 5000
+        })
 
-    if (!res){
-        console.log("No response from the xReadGroup command");
-        return undefined;
+        if (!res){
+            console.log("No response from the xReadGroup command");
+            return undefined;
+        }
+
+        let documents: streamMessage = res[0]!.messages;
+        return documents;
+    }catch(e){
+        console.log("xReadGroup command failed." + e);
     }
-
-   let documents: streamMessage = res[0]!.messages;
-   return documents;
 }
 
-export async function xAck(consumerGroup: string, eventId: string):Promise<number> {
-   const res = await redisClient.xAck(STREAM_NAME, consumerGroup, eventId);
-   return res;
+export async function xAck(consumerGroup: string, eventId: string):Promise<number | null> {
+    try{
+        const res = await redisClient.xAck(STREAM_NAME, consumerGroup, eventId);
+        return res;
+    }catch(e){
+        console.log("xAck failed." + e);
+        return null;
+    }
 }
