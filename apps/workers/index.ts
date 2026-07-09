@@ -167,7 +167,6 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
             chunks = await contextualRetrieval(markdown, chunks);
         }
 
-
         // get embeddings
         const embeddings = await Promise.all(chunks.map(chunk => {
             return inferenceClient.featureExtraction({
@@ -177,6 +176,7 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         }));
 
         // store in qdrant + bm25 idx
+
 
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
