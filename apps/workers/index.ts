@@ -3,8 +3,8 @@ import LlamaCloud from '@llamaindex/llama-cloud';
 import runParseJob from "./parse";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "./chunk"
+import { getDenseVectors, getSparseVectors } from "@repo/embed/client";
 import { openrouterClient } from "@repo/openrouter/client"
-import { FlagEmbedding, EmbeddingModel } from "fastembed";
 import { qdrantClient } from "@repo/qdrant/client";
 import { v4 as uuidv4 } from "uuid"
 import dotenv from "dotenv"
@@ -14,11 +14,6 @@ const CONSUMER_GROUP = process.env.CONSUMER_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 const CONTEXT_MODEL = process.env.CONTEXT_MODEL as string;
 const COLLECTION = process.env.COLLECTION as string;
-
-// other options: BGESmallEN (384-dim, faster), BGELargeEN (1024-dim, better quality)
-const denseModel = await FlagEmbedding.init({ model: EmbeddingModel.BGEBaseEN }); // 768-dim
-
-const bm25Model = await FlagEmbedding.init({ model: EmbeddingModel.CUSTOM });
 
 export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
 
@@ -124,22 +119,6 @@ async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<C
 
         return await getContextChunks(chunks, summary);
     }
-}
-
-async function getDenseVectors(texts: string[]): Promise<number[][]> {
-    const vectors: number[][] = [];
-    for await (const batch of denseModel.embed(texts, 32)) {
-        vectors.push(...batch);
-    }
-    return vectors;
-}
-
-async function getSparseVectors(texts: string[]) {
-    const embeddings = [];
-    for await (const batch of bm25Model.embed(texts, 32)) { // batchSize = 32
-        embeddings.push(...batch); // each item: { indices: number[], values: number[] }
-    }
-    return embeddings;
 }
 
 async function upsertChunks(chunks: Chunk[]){

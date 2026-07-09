@@ -69,6 +69,7 @@
         "@aws-sdk/s3-request-presigner": "^3.1081.0",
         "@llamaindex/llama-cloud": "^2.10.0",
         "@openrouter/sdk": "^0.13.31",
+        "@repo/embed": "*",
         "@repo/minio": "*",
         "@repo/openrouter": "*",
         "@repo/prisma": "*",
@@ -90,6 +91,18 @@
         "@prisma/adapter-pg": "^7.8.0",
         "@prisma/client": "^7.8.0",
         "dotenv": "^17.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
+    "packages/embed": {
+      "name": "@repo/embed",
+      "dependencies": {
+        "fastembed": "^2.1.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -422,6 +435,8 @@
     "@redis/search": ["@redis/search@6.1.0", "", { "peerDependencies": { "@redis/client": "^6.1.0" } }, "sha512-kS5agg+3yZbrdrt8omrew7FLCD8eOm7tarG1CROekPBRe+QGDR9aOpnHIQaYsYi6wPRTH70nQiF06AIjgURefQ=="],
 
     "@redis/time-series": ["@redis/time-series@6.1.0", "", { "peerDependencies": { "@redis/client": "^6.1.0" } }, "sha512-uIDBtV8MmG/xpJsRqbGSO4iX6ryj37MLMP82lRpFvI7ykAVe5GyqgxigEbU+uZNv9kDPNMKw3dvI/S/J1BNBzA=="],
+
+    "@repo/embed": ["@repo/embed@workspace:packages/embed"],
 
     "@repo/eslint-config": ["@repo/eslint-config@workspace:packages/eslint-config"],
 

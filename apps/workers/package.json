@@ -17,6 +17,7 @@
     "@openrouter/sdk": "^0.13.31",
     "@repo/minio": "*",
     "@repo/openrouter": "*",
+    "@repo/embed": "*",
     "@repo/prisma": "*",
     "@repo/qdrant": "*",
     "@repo/redis-stream": "*",
