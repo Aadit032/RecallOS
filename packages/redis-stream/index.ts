@@ -25,6 +25,7 @@ try {
 export async function xAdd(documentId: string): Promise<string | null>{
     try{
         const res = await redisClient.xAdd(STREAM_NAME, '*', { documentId });
+        console.log("The document Id has been pushed on the stream!!!")
         return res;
     }catch(e){
         console.log("xAdd to stream failed." + e);
@@ -55,7 +56,8 @@ export async function xReadGroup(consumerGroup: string, workerId: string): Promi
             return undefined;
         }
 
-        let documents: streamMessage = res[0]!.messages;
+        let documents: streamMessage = res[0]!.messages[0];
+        console.log("Read message from the stream | message: ", documents);
         return documents;
     }catch(e){
         console.log("xReadGroup command failed." + e);

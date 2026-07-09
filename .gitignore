@@ -6,6 +6,7 @@ node_modules
 .pnp.js
 
 local_cache/
+downloaded*
 
 # Local env files
 .env

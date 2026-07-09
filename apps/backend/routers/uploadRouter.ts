@@ -33,7 +33,7 @@ uploadRouter.post("/post-file-url", async (req, res) => {
 uploadRouter.post("/confirm", async (req, res) => {
     const { fileName, key, size } = req.body;
     const userId = req.userId
-    
+
     console.log("userId: " + userId)
     if (!key || !fileName || !userId || !size) {
         res.status(400).json({ message: "Missing required fields: fileName, key, size" });
@@ -61,6 +61,7 @@ uploadRouter.post("/confirm", async (req, res) => {
                 status: "QUEUED"
             }
         });
+        // if(!document) return res.status(401).json({ message: "Document was not created in the DB." })
         
         const messageId = await xAdd(document.id);
         if(!messageId) return res.status(500).json({ message: "The file was not pushed on the queue." });

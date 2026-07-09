@@ -1,6 +1,6 @@
 import { xAck, xReadGroup } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
-import runParseJob from "./parse";
+import { createParseJob, getFinishedJob } from "./parse";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "./chunk"
 import { getDenseVectors, getSparseVectors } from "@repo/embed/client";
@@ -148,23 +148,30 @@ async function upsertChunks(chunks: Chunk[]){
 
 // parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
 async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
+    console.log("streamMessage: ", streamMessage);
     try{
         const document = await prismaClient.document.update({
             where: { id: streamMessage.message.documentId },
             data: { status: "PROCESSING" },
             select: { ObjectKey: true }
         });
+        console.log("Document status updated to PROCESSING in db.")
         
         // Parse the document into markdown
         let markdown: string | null = null;
         let tier: Tier;
 
-        if(pricingTier == "basic") tier = "fast"; 
-        else if(pricingTier == "max") tier = "cost_effective";
+        if(pricingTier == "basic") tier = "cost_effective"; 
+        else if(pricingTier == "max") tier = "agentic";
         else tier = "agentic_plus";
 
+        const createJob = await createParseJob(document.ObjectKey, tier, "dev");
+        if(!createJob) {
+            console.log("Failed to create a parsing job...");
+            return;
+        }
         for(let i = 0; i < MAX_RETRIES; i++){
-            markdown = await runParseJob(document.ObjectKey, tier);
+            markdown = await getFinishedJob(createJob);
             if (markdown) {
                 break;
             }
@@ -202,7 +209,6 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
     }
 }
-
 
 // ========== RUN WORKERS ============
 workers();
