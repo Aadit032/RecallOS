@@ -19,7 +19,6 @@ async function downloadToDisk(bucket: string, key: string, localPath: string) {
     
     // Create read and write streams
     const readStream = response.Body as Readable;
-    localPath = localPath + response.ContentType;
     const writeStream = fs.createWriteStream(localPath);
     
     // Pipe and handle completion
@@ -56,7 +55,7 @@ export async function createParseJob(key: string, tier: Tier, env: env): Promise
         });
         console.log("created a parsing job!!!")
     }else{
-        const ext = key.split(".").pop();
+        const ext = key.split("/")[0];
         const localPath = `downloaded-${crypto.randomUUID()}.${ext}`;
         
         await downloadToDisk(AWS_BUCKET_NAME, key, localPath);
@@ -78,12 +77,12 @@ export async function createParseJob(key: string, tier: Tier, env: env): Promise
 
 export async function getFinishedJob(createJob: ParsingCreateResponse){
 
-    let getJob: ParsingGetResponse = await llamaClient.parsing.get(createJob.id, {expand: ["markdown"]});
+    let getJob: ParsingGetResponse = await llamaClient.parsing.get(createJob.id, {expand: ["markdown", "markdown_full"]});
     
     while(getJob.job.status !== "COMPLETED" && getJob.job.status !== "FAILED"){
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        getJob = await llamaClient.parsing.get(createJob.id, { expand: ["markdown"] });
+        getJob = await llamaClient.parsing.get(createJob.id, { expand: ["markdown", "markdown_full"] });
     };
 
     if(getJob.job.status === "FAILED"){
@@ -91,6 +90,7 @@ export async function getFinishedJob(createJob: ParsingCreateResponse){
         return null;
     }
 
+    console.log("getJob response: ", getJob);
     if(!getJob.markdown_full){
         console.log("Cant get the markdown from the completed job");
         return null;

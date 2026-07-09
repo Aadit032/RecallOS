@@ -219,4 +219,4 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 }
 
 // ========== RUN WORKERS ============
-workers();
+await workers();
