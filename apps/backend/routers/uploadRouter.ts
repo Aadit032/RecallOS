@@ -11,6 +11,10 @@ const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME
 
 uploadRouter.post("/post-file-url", async (req, res) => {
     const { fileName, contentType } = req.body;
+     if (!fileName || !contentType) {
+        res.status(400).json({ message: "Missing required fields: fileName, contentType" });
+        return;
+    }
 
     const key = `pdf/${fileName}-${crypto.randomUUID()}`
 
@@ -27,14 +31,20 @@ uploadRouter.post("/post-file-url", async (req, res) => {
 
 
 uploadRouter.post("/confirm", async (req, res) => {
-    const { fileName, key } = req.body;
-    const size = Number(req.body.size);
+    const { fileName, key, size } = req.body;
+    // const size = Number(req.body.size);
+    if (!key || !fileName || size === undefined) {
+        res.status(400).json({ message: "Missing required fields: fileName, key, size" });
+        return;
+    }
 
     try{
         const command = new HeadObjectCommand({ Bucket: AWS_BUCKET_NAME, Key: key });
         const response = await s3.send(command);
+        console.log(`file size recieved from minio: ${response.ContentLength}`)
         
-        if (response.ContentLength! !== size){
+        if (response.ContentLength! !== Number(size)){
+            console.log("The file has not been uploaded correctly. Please try again. File not inserted in DB.");
             res.status(403).json({ 
                 message: "The file has not been uploaded correctly. Please try again. File not inserted in DB." 
             });
@@ -55,9 +65,18 @@ uploadRouter.post("/confirm", async (req, res) => {
 
         res.status(200).json({ message: "Server confirmed the upload!!", documentId: document.id });
     }catch(e){
-        res.status(500).json({
-            message: "Server failed to confirm the upload"
-        })
+        console.log("Server failed to confirm the upload");
+
+        try {
+            await prismaClient.document.update({
+                where: { ObjectKey: key },
+                data: { status: "FAILED" }
+            });
+        } catch (innerErr) {
+            console.log("Also failed to record FAILED status:", innerErr);
+        }
+        
+        res.status(500).json({ message: "Server failed to confirm the upload" });
     }
 
 });
@@ -65,6 +84,10 @@ uploadRouter.post("/confirm", async (req, res) => {
 
 uploadRouter.post("/get-file-url", async (req, res) => {
     const { documentId } = req.body;
+    if (!documentId) {
+        res.status(400).json({ message: "Missing required field: documentId" });
+        return;
+    }
 
     const document = await prismaClient.document.findUnique({
         where: { id: documentId },

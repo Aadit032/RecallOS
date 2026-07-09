@@ -28,10 +28,12 @@ export default function Home() {
             const res = await axios.put(presignedUrl, file, {
                 headers: { "Content-Type": file.type },
             });
+            console.log(res.data);
 
             if(res.status == 200){
                 // 3. Tell backend the upload finished, so it can verify + queue processing
                 setStatus("Confirming upload...");
+                console.log(`file size: ${file.size}`)
                 const { data } = await axios.post(`${API_BASE}/confirm`, {
                     fileName: file.name,
                     key,

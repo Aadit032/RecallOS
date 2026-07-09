@@ -7,8 +7,8 @@
     "@types/bun": "latest"
   },
   "scripts": {
-    "dev": "bun run index.ts",
-    "start": "bun run index.ts"
+    "dev": "bun index.ts",
+    "start": "bun index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1081.0",
