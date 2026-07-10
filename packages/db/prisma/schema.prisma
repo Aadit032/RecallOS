@@ -15,6 +15,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   documents Document[]
+  chats     Chat[]
 }
 
 enum DocumentStatus {
@@ -38,4 +39,30 @@ model Document {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
+}
+
+model Chat {
+  id        String    @id @default(uuid())
+  title     String    @default("New chat")
+  pinned    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@index([userId])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  role      String
+  content   String
+  createdAt DateTime @default(now())
+
+  chatId    String
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
 }

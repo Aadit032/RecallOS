@@ -16,7 +16,7 @@ async function setup(){
 
     const created = await qdrantClient.createCollection(COLLECTION, {
       vectors: { dense: { size: Number(DENSE_DIM), distance: "Cosine" } },
-      sparse_vectors: { bm25: { index: { on_disk: false } } }
+      sparse_vectors: { splade: { index: { on_disk: false } } }
     });
     if(created) console.log("New collection created: ", COLLECTION);
 

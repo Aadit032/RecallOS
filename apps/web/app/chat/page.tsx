@@ -1,9 +1,11 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import axios from "axios"
 import {
   FileText,
+  Loader2,
   Mic,
   MicOff,
   Paperclip,
@@ -40,6 +42,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 
+const API_BASE_CHAT = "http://localhost:3000/api/v1/chat"
+
 type Role = "user" | "assistant"
 
 type Message = {
@@ -57,97 +61,13 @@ type ChatSession = {
   messages: Message[]
 }
 
-const seedSessions: ChatSession[] = [
-  {
-    id: "chat-1",
-    title: "Hybrid retrieval overview",
-    pinned: true,
-    updatedAt: "2026-07-09T14:20:00.000Z",
-    messages: [
-      {
-        id: "m1",
-        role: "user",
-        content: "How does hybrid retrieval work in RecallOS?",
-        createdAt: "2026-07-09T14:10:00.000Z",
-      },
-      {
-        id: "m2",
-        role: "assistant",
-        content:
-          "RecallOS runs BM25 (OpenSearch) and vector search (Qdrant) in parallel, then fuses the ranked lists with Reciprocal Rank Fusion and a cross-encoder reranker before sending the top chunks to the LLM.",
-        createdAt: "2026-07-09T14:10:12.000Z",
-      },
-      {
-        id: "m3",
-        role: "user",
-        content: "What gets stored for each chunk?",
-        createdAt: "2026-07-09T14:11:00.000Z",
-      },
-      {
-        id: "m4",
-        role: "assistant",
-        content:
-          "Each chunk is enriched with a summary, section title, keywords, entities, page number, tags, document ID, and user ID — then embedded and indexed for both lexical and semantic retrieval.",
-        createdAt: "2026-07-09T14:11:18.000Z",
-      },
-      {
-        id: "m4b",
-        role: "user",
-        content: "And how does RRF decide the final ranking?",
-        createdAt: "2026-07-09T14:12:00.000Z",
-      },
-      {
-        id: "m4c",
-        role: "assistant",
-        content:
-          "Reciprocal Rank Fusion scores each document by summing 1 / (k + rank) across both result lists. Items that rank well in either (or both) systems rise to the top, then the cross-encoder reorders the fused shortlist.",
-        createdAt: "2026-07-09T14:12:20.000Z",
-      },
-    ],
-  },
-  {
-    id: "chat-2",
-    title: "Q3 roadmap notes",
-    pinned: false,
-    updatedAt: "2026-07-08T18:05:00.000Z",
-    messages: [
-      {
-        id: "m5",
-        role: "user",
-        content: "Summarize the Q3 product notes from our knowledge base.",
-        createdAt: "2026-07-08T18:00:00.000Z",
-      },
-      {
-        id: "m6",
-        role: "assistant",
-        content:
-          "Q3 focuses on agent workflows, better citations, and connectors. Ingestion remains async via Redis Streams; retrieval stays hybrid with stronger reranking.",
-        createdAt: "2026-07-08T18:00:20.000Z",
-      },
-    ],
-  },
-  {
-    id: "chat-3",
-    title: "Upload pipeline debug",
-    pinned: false,
-    updatedAt: "2026-07-07T09:40:00.000Z",
-    messages: [
-      {
-        id: "m7",
-        role: "user",
-        content: "Why would a document stay in QUEUED?",
-        createdAt: "2026-07-07T09:35:00.000Z",
-      },
-      {
-        id: "m8",
-        role: "assistant",
-        content:
-          "Usually the worker isn't consuming the Redis stream, or LlamaParse failed before status was updated. Check worker logs and the document's status field in Postgres.",
-        createdAt: "2026-07-07T09:35:25.000Z",
-      },
-    ],
-  },
-]
+/** Local draft before the first message creates a DB session. */
+const DRAFT_ID = "__draft__"
+
+function authHeaders() {
+  const token = localStorage.getItem("token")
+  return { Authorization: "Bearer " + token }
+}
 
 function formatChatTime(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -156,18 +76,87 @@ function formatChatTime(iso: string) {
   })
 }
 
+function emptyDraft(): ChatSession {
+  return {
+    id: DRAFT_ID,
+    title: "New chat",
+    pinned: false,
+    updatedAt: new Date().toISOString(),
+    messages: [],
+  }
+}
+
 export default function ChatPage() {
-  const [sessions, setSessions] = useState<ChatSession[]>(seedSessions)
-  const [activeId, setActiveId] = useState(seedSessions[0]?.id ?? "")
+  const [sessions, setSessions] = useState<ChatSession[]>([emptyDraft()])
+  const [activeId, setActiveId] = useState(DRAFT_ID)
   const [query, setQuery] = useState("")
   const [draft, setDraft] = useState("")
   const [attachedName, setAttachedName] = useState<string | null>(null)
   const [listening, setListening] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState("")
   const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
+
+  const loadChats = useCallback(async () => {
+    setLoading(true)
+    setError("")
+    try {
+      const { data } = await axios.get(`${API_BASE_CHAT}/`, {
+        headers: authHeaders(),
+      })
+      const chats: ChatSession[] = (data.chats ?? []).map(
+        (c: {
+          id: string
+          title: string
+          pinned: boolean
+          updatedAt: string
+          messages: Message[]
+        }) => ({
+          id: c.id,
+          title: c.title,
+          pinned: c.pinned,
+          updatedAt: c.updatedAt,
+          messages: (c.messages ?? []).map((m) => ({
+            id: m.id,
+            role: m.role as Role,
+            content: m.content,
+            createdAt:
+              typeof m.createdAt === "string"
+                ? m.createdAt
+                : new Date(m.createdAt).toISOString(),
+          })),
+        })
+      )
+
+      setSessions((prev) => {
+        const draftSession = prev.find(
+          (s) => s.id === DRAFT_ID && s.messages.length === 0
+        )
+        // Keep a draft slot so "new chat" UX always exists
+        return draftSession ? [draftSession, ...chats] : [emptyDraft(), ...chats]
+      })
+
+      setActiveId((current) => {
+        if (current === DRAFT_ID) return DRAFT_ID
+        if (chats.some((c) => c.id === current)) return current
+        return chats[0]?.id ?? DRAFT_ID
+      })
+    } catch (e) {
+      console.error(e)
+      setError("Could not load chats. Sign in and ensure the backend is running.")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadChats()
+  }, [loadChats])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -175,6 +164,8 @@ export default function ChatPage() {
       q ? s.title.toLowerCase().includes(q) : true
     )
     return [...list].sort((a, b) => {
+      if (a.id === DRAFT_ID) return -1
+      if (b.id === DRAFT_ID) return 1
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
       return +new Date(b.updatedAt) - +new Date(a.updatedAt)
     })
@@ -182,71 +173,150 @@ export default function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-  }, [active?.messages.length, activeId])
+  }, [active?.messages.length, activeId, sending])
 
   const createChat = () => {
-    const id = `chat-${crypto.randomUUID().slice(0, 8)}`
-    const session: ChatSession = {
-      id,
-      title: "New chat",
-      pinned: false,
-      updatedAt: new Date().toISOString(),
-      messages: [],
-    }
-    setSessions((prev) => [session, ...prev])
-    setActiveId(id)
+    setSessions((prev) => {
+      const withoutEmptyDraft = prev.filter(
+        (s) => !(s.id === DRAFT_ID && s.messages.length === 0)
+      )
+      return [emptyDraft(), ...withoutEmptyDraft]
+    })
+    setActiveId(DRAFT_ID)
     setDraft("")
     setAttachedName(null)
+    setError("")
   }
 
-  const togglePin = (id: string) => {
+  const togglePin = async (id: string) => {
+    if (id === DRAFT_ID) return
+    const session = sessions.find((s) => s.id === id)
+    if (!session) return
+
+    const nextPinned = !session.pinned
     setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s))
+      prev.map((s) => (s.id === id ? { ...s, pinned: nextPinned } : s))
     )
+
+    try {
+      await axios.patch(
+        `${API_BASE_CHAT}/${id}`,
+        { pinned: nextPinned },
+        { headers: authHeaders() }
+      )
+    } catch (e) {
+      console.error(e)
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, pinned: !nextPinned } : s))
+      )
+    }
   }
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     const text = draft.trim()
-    if (!text || !active) return
+    if (!text || !active || sending) return
 
-    const userMsg: Message = {
-      id: `m-${crypto.randomUUID()}`,
+    const content = attachedName ? `${text}\n\n📎 ${attachedName}` : text
+    const tempUserId = `temp-user-${crypto.randomUUID()}`
+    const optimisticUser: Message = {
+      id: tempUserId,
       role: "user",
-      content: attachedName ? `${text}\n\n📎 ${attachedName}` : text,
+      content,
       createdAt: new Date().toISOString(),
     }
 
-    const assistantMsg: Message = {
-      id: `m-${crypto.randomUUID()}`,
-      role: "assistant",
-      content:
-        "Got it — I'll search your organizational memory for relevant chunks and reply with citations once the live chat API is connected. (Seeded UI response.)",
-      createdAt: new Date().toISOString(),
-    }
-
+    // Optimistic UI
     setSessions((prev) =>
       prev.map((s) => {
         if (s.id !== active.id) return s
-        const title =
-          s.title === "New chat" && s.messages.length === 0
-            ? text.slice(0, 48) + (text.length > 48 ? "…" : "")
-            : s.title
         return {
           ...s,
-          title,
+          title:
+            s.title === "New chat" && s.messages.length === 0
+              ? text.slice(0, 48) + (text.length > 48 ? "…" : "")
+              : s.title,
           updatedAt: new Date().toISOString(),
-          messages: [...s.messages, userMsg, assistantMsg],
+          messages: [...s.messages, optimisticUser],
         }
       })
     )
     setDraft("")
     setAttachedName(null)
+    setSending(true)
+    setError("")
+
+    try {
+      const body: { message: string; chatId?: string } = { message: content }
+      if (active.id !== DRAFT_ID) body.chatId = active.id
+
+      const { data } = await axios.post(`${API_BASE_CHAT}/message`, body, {
+        headers: authHeaders(),
+      })
+
+      const chatId: string = data.chatId
+      const userMsg: Message = {
+        id: data.userMessage.id,
+        role: "user",
+        content: data.userMessage.content,
+        createdAt: data.userMessage.createdAt,
+      }
+      const assistantMsg: Message = {
+        id: data.assistantMessage.id,
+        role: "assistant",
+        content: data.assistantMessage.content,
+        createdAt: data.assistantMessage.createdAt,
+      }
+
+      setSessions((prev) => {
+        const rest = prev.filter((s) => s.id !== active.id && s.id !== chatId)
+        const prior =
+          prev.find((s) => s.id === active.id) ??
+          prev.find((s) => s.id === chatId)
+
+        const priorWithoutTemp = (prior?.messages ?? []).filter(
+          (m) => m.id !== tempUserId
+        )
+
+        const updated: ChatSession = {
+          id: chatId,
+          title: data.title ?? prior?.title ?? "Chat",
+          pinned: prior?.pinned ?? false,
+          updatedAt: new Date().toISOString(),
+          messages: [...priorWithoutTemp, userMsg, assistantMsg],
+        }
+
+        // Keep a fresh draft available after the first message lands
+        const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
+        return needsDraft ? [emptyDraft(), updated, ...rest] : [updated, ...rest]
+      })
+      setActiveId(chatId)
+    } catch (e) {
+      console.error(e)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to send message"
+      )
+      // Roll back optimistic user message
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== active.id) return s
+          return {
+            ...s,
+            messages: s.messages.filter((m) => m.id !== tempUserId),
+          }
+        })
+      )
+      setDraft(text)
+    } finally {
+      setSending(false)
+    }
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      sendMessage()
+      void sendMessage()
     }
   }
 
@@ -279,7 +349,12 @@ export default function ChatPage() {
             <SidebarGroupLabel>Chats</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {filtered.length === 0 && (
+                {loading && sessions.length <= 1 && (
+                  <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                    Loading chats…
+                  </p>
+                )}
+                {filtered.length === 0 && !loading && (
                   <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                     No chats match your search.
                   </p>
@@ -306,17 +381,19 @@ export default function ChatPage() {
                           {session.messages.length} messages
                         </span>
                       </SidebarMenuButton>
-                      <SidebarMenuAction
-                        showOnHover
-                        onClick={() => togglePin(session.id)}
-                        title={session.pinned ? "Unpin" : "Pin"}
-                      >
-                        {session.pinned ? (
-                          <PinOff className="size-3.5" />
-                        ) : (
-                          <Pin className="size-3.5" />
-                        )}
-                      </SidebarMenuAction>
+                      {session.id !== DRAFT_ID && (
+                        <SidebarMenuAction
+                          showOnHover
+                          onClick={() => void togglePin(session.id)}
+                          title={session.pinned ? "Unpin" : "Pin"}
+                        >
+                          {session.pinned ? (
+                            <PinOff className="size-3.5" />
+                          ) : (
+                            <Pin className="size-3.5" />
+                          )}
+                        </SidebarMenuAction>
+                      )}
                     </SidebarMenuItem>
                   )
                 })}
@@ -352,13 +429,15 @@ export default function ChatPage() {
 
         {/* Messages + floating composer */}
         <div className="relative min-h-0 flex-1">
-          {/* Scrollable thread — padding leaves room under the floating input */}
-          <div
-            ref={scrollRef}
-            className="absolute inset-0 overflow-y-auto"
-          >
+          <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-8 pb-28 sm:px-6 sm:pb-32">
-              {(!active || active.messages.length === 0) && (
+              {error && (
+                <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+
+              {(!active || active.messages.length === 0) && !sending && (
                 <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
                   <p className="font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
                     Memory chat
@@ -368,8 +447,8 @@ export default function ChatPage() {
                     <span className="font-script text-foreground">memory</span>
                   </span>
                   <p className="max-w-md text-muted-foreground">
-                    Query documents, notes, and organizational knowledge. Answers
-                    will cite the chunks they came from.
+                    Query documents, notes, and organizational knowledge. A new
+                    session is created when you send your first message.
                   </p>
                 </div>
               )}
@@ -393,11 +472,17 @@ export default function ChatPage() {
                   </div>
                 )
               )}
+
+              {sending && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Searching memory and generating a reply…
+                </div>
+              )}
               <div ref={bottomRef} className="h-px w-full shrink-0" />
             </div>
           </div>
 
-          {/* Composer floats over the scroll area so messages pass under it */}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/95 to-transparent pt-5 pb-3">
             <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 sm:px-6">
               {attachedName && (
@@ -420,7 +505,6 @@ export default function ChatPage() {
                 </p>
               )}
 
-              {/* Single-line composer: actions left, input center, send right */}
               <div className="memory-glow flex items-center gap-1 rounded-full border border-border/80 bg-background/90 p-1.5 backdrop-blur-sm focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
                 <input
                   ref={fileRef}
@@ -481,6 +565,7 @@ export default function ChatPage() {
                   onKeyDown={onKeyDown}
                   placeholder="Ask anything about your knowledge base…"
                   rows={1}
+                  disabled={sending}
                   className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-base shadow-none focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
                 />
 
@@ -488,17 +573,21 @@ export default function ChatPage() {
                   type="button"
                   size="icon-sm"
                   className="mr-0.5 shrink-0 rounded-full"
-                  disabled={!draft.trim()}
-                  onClick={sendMessage}
+                  disabled={!draft.trim() || sending}
+                  onClick={() => void sendMessage()}
                   aria-label="Send message"
                 >
-                  <Send className="size-4" />
+                  {sending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Send className="size-4" />
+                  )}
                 </Button>
               </div>
 
               <p className="mt-1.5 text-center text-xs text-muted-foreground">
                 <Paperclip className="mr-1 inline size-3" />
-                Chat is UI-seeded for now — retrieval will plug in next.
+                Hybrid retrieval · RRF · cross-encoder · LLM
               </p>
             </div>
           </div>

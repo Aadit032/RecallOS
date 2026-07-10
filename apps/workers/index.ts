@@ -137,7 +137,7 @@ async function upsertChunks(chunks: Chunk[]){
             id: uuidv4(),
             vector: {
                 dense: embeddings[i],
-                bm25: sparseVectors[i],
+                splade: sparseVectors[i],
             },
             payload: {
                 text: chunk.text,
@@ -154,7 +154,7 @@ async function upsertChunks(chunks: Chunk[]){
     }
 }
 
-// parse => chunk => enrich context => get embeddings => store in vector db + bm25 index
+// parse => chunk => enrich context => get embeddings => store in vector db + splade index
 async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
     console.log("streamMessage: ", streamMessage);
     try{
@@ -213,7 +213,7 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
             chunks = await contextualRetrieval(markdown, chunks);
         }
 
-        // get embeddings + store in qdrant + bm25 idx
+        // get embeddings + store in qdrant + splade idx
         await upsertChunks(chunks);
 
         await prismaClient.document.update({

@@ -1,5 +1,5 @@
 /**
- * Signature visual: dual retrieval lanes (BM25 + vectors) fuse into a
+ * Signature visual: dual retrieval lanes (SPLADE + vectors) fuse into a
  * source-grounded answer — the product thesis in one panel.
  */
 export function RetrievalDiagram() {
@@ -31,7 +31,7 @@ export function RetrievalDiagram() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Lane
-            label="BM25"
+            label="splade"
             subtitle="OpenSearch · lexical"
             hits={["exact term match", "title boost", "phrase proximity"]}
             delay="0s"
@@ -60,7 +60,7 @@ export function RetrievalDiagram() {
             <CitationChip page="4" doc="q3-notes.md" />
           </div>
           <p className="mt-2 text-sm leading-relaxed text-foreground/90">
-            BM25 and vector lists fuse with reciprocal rank fusion; a cross-encoder
+            SPLADE and vector lists fuse with reciprocal rank fusion; a cross-encoder
             reorders the shortlist before the LLM sees context.
           </p>
         </div>

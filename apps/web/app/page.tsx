@@ -23,7 +23,7 @@ const capabilities = [
     icon: Search,
     title: "Hybrid retrieval",
     description:
-      "BM25 and vectors run together, fuse with RRF, then rerank so exact matches and semantic hits both surface.",
+      "SPLADE and vectors run together, fuse with RRF, then rerank so exact matches and semantic hits both surface.",
   },
   {
     icon: Brain,
@@ -103,7 +103,7 @@ export default function Home() {
               <p className="mt-6 max-w-md text-sm text-muted-foreground">
                 Built for teams that need{" "}
                 <span className="font-medium text-foreground">receipts</span>, not
-                vibes — BM25 + vectors, citations on every answer.
+                vibes — SPLADE + vectors, citations on every answer.
               </p>
             </div>
 
