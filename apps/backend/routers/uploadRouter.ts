@@ -65,21 +65,34 @@ uploadRouter.post("/confirm", async (req, res) => {
             });
             return;
         }
+
+        let document;
+        let isNew = true; 
         
-        const document = await prismaClient.document.upsert({
-            where: { ObjectKey: key },
-            update: {},
-            create: {
-                title: fileName,
-                ObjectKey: key,
-                userId,
-                status: "QUEUED"
-            }
-        });
-        // if(!document) return res.status(401).json({ message: "Document was not created in the DB." })
-        if(document.status != "QUEUED"){
+        try{
+            document = await prismaClient.document.create({
+                data: {
+                    title: fileName,
+                    ObjectKey: key,
+                    userId,
+                    status: "QUEUED"
+                }
+            });
+        }catch(e: any){
+            if(e.code === "P2002"){
+                isNew = false;
+                document = await prismaClient.document.findUniqueOrThrow({
+                    where: { ObjectKey: key }
+                });
+            }else throw e;
+
+        }
+        if (isNew) {
             const messageId = await xAdd(document.id);
-            if(!messageId) return res.status(500).json({ message: "The file was not pushed on the queue." });
+            if (!messageId) {
+                res.status(500).json({ message: "The file was not pushed on the queue." });
+                return;
+            }
         }
 
         res.status(200).json({ message: "Server confirmed the upload!!", documentId: document.id });

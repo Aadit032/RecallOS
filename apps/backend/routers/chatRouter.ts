@@ -2,6 +2,6 @@ import { Router } from "express"
 
 const chatRouter = Router();
 
-chatRouter.post("");
+// chatRouter.post("");
 
 export default chatRouter;
