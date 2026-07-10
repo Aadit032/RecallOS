@@ -67,6 +67,7 @@ export async function xReadGroup(consumerGroup: string, workerId: string): Promi
 export async function xAck(consumerGroup: string, eventId: string):Promise<number | null> {
     try{
         const res = await redisClient.xAck(STREAM_NAME, consumerGroup, eventId);
+        console.log("ACKNOWLEDGED!!!")
         return res;
     }catch(e){
         console.log("xAck failed." + e);

@@ -8,7 +8,7 @@ const splade = await SparseTextEmbedding.init({ model: SparseEmbeddingModel.Spla
 
 export async function getDenseVectors(texts: string[]): Promise<number[][]> {
     const vectors: number[][] = [];
-    for await (const batch of denseModel.embed(texts, 8)) {
+    for await (const batch of denseModel.embed(texts, 6)) {
         vectors.push(...batch);
     }
     return vectors;
@@ -16,7 +16,7 @@ export async function getDenseVectors(texts: string[]): Promise<number[][]> {
 
 export async function getSparseVectors(texts: string[]) {
     const embeddings = [];
-    for await (const batch of splade.embed(texts, 32)) { // batchSize = 32
+    for await (const batch of splade.embed(texts, 6)) { // batchSize = 32
         embeddings.push(...batch); // each item: { indices: number[], values: number[] }
     }
     return embeddings;

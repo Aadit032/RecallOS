@@ -39,6 +39,8 @@ async function workers(){
         try{
             await processDocuments(response, "basic");
             await xAck(CONSUMER_GROUP, response.id);
+
+            console.log("======== WORKERS DONE!! =========");
         }catch(e){
             console.log("Error while running workers: ", e instanceof Error ? e.message : e);
         }
@@ -127,6 +129,9 @@ async function upsertChunks(chunks: Chunk[]){
     try{
         const sparseVectors = await getSparseVectors(texts);
         const embeddings = await getDenseVectors(texts);
+
+        console.log("sparseVectors", sparseVectors);
+        console.log("embeddings", embeddings);
     
         const points = chunks.map((chunk, i) => ({
             id: uuidv4(),
@@ -139,8 +144,11 @@ async function upsertChunks(chunks: Chunk[]){
                 documentId: chunk.id,
             }
         }));
+
+        console.log("points", points);
     
         await qdrantClient.upsert(COLLECTION, { wait: true, points });
+        console.log("points have been upserted to qdrant!!")
     }catch(e){
         console.log("Error upserting chunks: ", e instanceof Error ? e.message : e);
     }
