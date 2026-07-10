@@ -24,7 +24,6 @@ export default async function middleware(req: Request, res: Response, next: Next
 
    try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as jwt.JwtPayload;
-      
       req.userId = decoded.id;
       next();
    } catch (e) {

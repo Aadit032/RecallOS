@@ -20,7 +20,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 
-const API_BASE = "http://localhost:3000/api/v1/upload"
+const API_BASE_UPLOAD = "http://localhost:3000/api/v1/upload"
+const API_BASE_DOWNLOAD = "http://localhost:3000/api/v1/download"
 
 type DocStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED"
 
@@ -93,6 +94,7 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false)
   const [status, setStatus] = useState("")
   const [documentId, setDocumentId] = useState<string | null>(null)
+  const [uploadKey, setUploadKey] = useState<string | null>(null)
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState("")
@@ -102,7 +104,7 @@ export default function Dashboard() {
     setDocsError("")
     try {
       const token = localStorage.getItem("token")
-      const { data } = await axios.get(`${API_BASE}/documents`, {
+      const { data } = await axios.get(`${API_BASE_DOWNLOAD}/list`, {
         headers: { Authorization: "Bearer " + token },
       })
       setDocuments(data.documents ?? [])
@@ -133,6 +135,7 @@ export default function Dashboard() {
     setFile(null)
     setStatus("")
     setDocumentId(null)
+    setUploadKey(null)
   }
 
   const handleUpload = async () => {
@@ -146,7 +149,7 @@ export default function Dashboard() {
       const {
         data: { presignedUrl, key },
       } = await axios.post(
-        `${API_BASE}/post-file-url`,
+        `${API_BASE_UPLOAD}/post-file-url`,
         { fileName: file.name, contentType: file.type },
         {
           headers: {
@@ -154,6 +157,7 @@ export default function Dashboard() {
           },
         }
       )
+      setUploadKey(key)
 
       setStatus("Uploading file…")
       const res = await axios.put(presignedUrl, file, {
@@ -163,7 +167,7 @@ export default function Dashboard() {
       if (res.status == 200) {
         setStatus("Confirming upload…")
         const { data } = await axios.post(
-          `${API_BASE}/confirm`,
+          `${API_BASE_UPLOAD}/confirm`,
           {
             fileName: file.name,
             key,
@@ -189,13 +193,13 @@ export default function Dashboard() {
     }
   }
 
-  const handleDownload = async (id?: string) => {
-    const targetId = id ?? documentId
-    if (!targetId) return
+  const handleDownload = async (key?: string) => {
+    const targetKey = key ?? uploadKey
+    if (!targetKey) return
     const token = localStorage.getItem("token")
     const { data } = await axios.post(
-      `${API_BASE}/get-file-url`,
-      { documentId: targetId },
+      `${API_BASE_DOWNLOAD}/get-download-url`,
+      { key: targetKey },
       {
         headers: {
           Authorization: "Bearer " + token,
@@ -280,6 +284,7 @@ export default function Dashboard() {
                 onChange={(e) => {
                   const selected = e.target.files?.[0]
                   setDocumentId(null)
+                  setUploadKey(null)
                   setStatus("")
                   setFile(selected ?? null)
                 }}
@@ -501,7 +506,7 @@ export default function Dashboard() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => void handleDownload(doc.id)}
+                      onClick={() => void handleDownload(doc.ObjectKey)}
                     >
                       <Download className="size-3.5" />
                       Download

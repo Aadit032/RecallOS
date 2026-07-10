@@ -10,13 +10,26 @@ const uploadRouter = Router();
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME
 
 uploadRouter.post("/post-file-url", async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+    }
+
     const { fileName, contentType } = req.body;
      if (!fileName || !contentType) {
         res.status(400).json({ message: "Missing required fields: fileName, contentType" });
         return;
     }
 
-    const key = `pdf/${fileName}-${crypto.randomUUID()}`
+    const ALLOWED_TYPES = ["application/pdf"];
+    if (!ALLOWED_TYPES.includes(contentType)) {
+        res.status(400).json({ message: "Unsupported content type" });
+        return;
+    }
+
+    const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const key = `pdf/${safeFileName}-${crypto.randomUUID()}`;
 
     const command = new PutObjectCommand({
         Bucket: AWS_BUCKET_NAME,
@@ -53,18 +66,21 @@ uploadRouter.post("/confirm", async (req, res) => {
             return;
         }
         
-        const document = await prismaClient.document.create({
-            data: {
+        const document = await prismaClient.document.upsert({
+            where: { ObjectKey: key },
+            update: {},
+            create: {
                 title: fileName,
                 ObjectKey: key,
-                userId: userId,
+                userId,
                 status: "QUEUED"
             }
         });
         // if(!document) return res.status(401).json({ message: "Document was not created in the DB." })
-        
-        const messageId = await xAdd(document.id);
-        if(!messageId) return res.status(500).json({ message: "The file was not pushed on the queue." });
+        if(document.status != "QUEUED"){
+            const messageId = await xAdd(document.id);
+            if(!messageId) return res.status(500).json({ message: "The file was not pushed on the queue." });
+        }
 
         res.status(200).json({ message: "Server confirmed the upload!!", documentId: document.id });
     }catch(e){
