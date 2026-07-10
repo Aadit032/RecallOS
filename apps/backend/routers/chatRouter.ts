@@ -97,23 +97,61 @@ function titleFromMessage(message: string): string {
 }
 
 
+/**
+ * List chats for the authenticated user (paginated, no messages).
+ * Query: ?limit=20&cursor=<chatId>
+ * Returns chat metadata + messageCount; load messages via GET /:id.
+ */
 chatRouter.get("/", async (req, res) => {
     const userId = req.userId;
+    if (!userId) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+    }
+
+    const limitSchema = z.object({
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+        cursor: z.string().uuid().optional(),
+    });
+    const parsed = limitSchema.safeParse(req.query);
+    if (!parsed.success) {
+        res.status(422).json({ message: "Invalid query", error: parsed.error });
+        return;
+    }
+
+    const { limit, cursor } = parsed.data;
 
     try {
-        const chats = await prismaClient.chat.findMany({
+        const rows = await prismaClient.chat.findMany({
             where: { userId },
-            orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-            include: {
-                messages: {
-                    orderBy: { createdAt: "desc" },
-                    select: { id: true, role: true, content: true, createdAt: true },
-                    take: 20
-                },
+            orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }, { id: "desc" }],
+            take: limit + 1,
+            ...(cursor
+                ? {
+                      cursor: { id: cursor },
+                      skip: 1,
+                  }
+                : {}),
+            select: {
+                id: true,
+                title: true,
+                pinned: true,
+                updatedAt: true,
+                createdAt: true,
+                _count: { select: { messages: true } },
             },
         });
 
-        res.status(200).json({ chats });
+        const hasMore = rows.length > limit;
+        const page = hasMore ? rows.slice(0, limit) : rows;
+        const nextCursor = hasMore ? page[page.length - 1]!.id : null;
+
+        const chats = page.map(({ _count, ...chat }) => ({
+            ...chat,
+            messageCount: _count.messages,
+        }));
+
+        res.status(200).json({ chats, nextCursor, hasMore });
     } catch (e) {
         console.error("List chats error:", e);
         res.status(500).json({

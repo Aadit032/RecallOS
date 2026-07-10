@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/tooltip"
 
 const API_BASE_CHAT = "http://localhost:3000/api/v1/chat"
+const PAGE_SIZE = 20
 
 type Role = "user" | "assistant"
 
@@ -58,7 +59,18 @@ type ChatSession = {
   title: string
   pinned: boolean
   updatedAt: string
+  messageCount: number
   messages: Message[]
+  /** True once messages have been fetched (or session is local draft). */
+  messagesLoaded: boolean
+}
+
+type ChatListItem = {
+  id: string
+  title: string
+  pinned: boolean
+  updatedAt: string
+  messageCount: number
 }
 
 /** Local draft before the first message creates a DB session. */
@@ -82,7 +94,24 @@ function emptyDraft(): ChatSession {
     title: "New chat",
     pinned: false,
     updatedAt: new Date().toISOString(),
+    messageCount: 0,
     messages: [],
+    messagesLoaded: true,
+  }
+}
+
+function mapListItem(c: ChatListItem): ChatSession {
+  return {
+    id: c.id,
+    title: c.title,
+    pinned: c.pinned,
+    updatedAt:
+      typeof c.updatedAt === "string"
+        ? c.updatedAt
+        : new Date(c.updatedAt).toISOString(),
+    messageCount: c.messageCount ?? 0,
+    messages: [],
+    messagesLoaded: false,
   }
 }
 
@@ -94,57 +123,73 @@ export default function ChatPage() {
   const [attachedName, setAttachedName] = useState<string | null>(null)
   const [listening, setListening] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState("")
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const loadMoreRef = useRef<HTMLDivElement>(null)
+  const loadingMoreRef = useRef(false)
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
+
+  const fetchChatPage = useCallback(async (cursor?: string | null) => {
+    const { data } = await axios.get(`${API_BASE_CHAT}/`, {
+      headers: authHeaders(),
+      params: {
+        limit: PAGE_SIZE,
+        ...(cursor ? { cursor } : {}),
+      },
+    })
+    return data as {
+      chats: ChatListItem[]
+      nextCursor: string | null
+      hasMore: boolean
+    }
+  }, [])
 
   const loadChats = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      const { data } = await axios.get(`${API_BASE_CHAT}/`, {
-        headers: authHeaders(),
-      })
-      const chats: ChatSession[] = (data.chats ?? []).map(
-        (c: {
-          id: string
-          title: string
-          pinned: boolean
-          updatedAt: string
-          messages: Message[]
-        }) => ({
-          id: c.id,
-          title: c.title,
-          pinned: c.pinned,
-          updatedAt: c.updatedAt,
-          messages: (c.messages ?? []).map((m) => ({
-            id: m.id,
-            role: m.role as Role,
-            content: m.content,
-            createdAt:
-              typeof m.createdAt === "string"
-                ? m.createdAt
-                : new Date(m.createdAt).toISOString(),
-          })),
-        })
-      )
+      const data = await fetchChatPage()
+      const chats = (data.chats ?? []).map(mapListItem)
+
+      setNextCursor(data.nextCursor ?? null)
+      setHasMore(Boolean(data.hasMore))
 
       setSessions((prev) => {
+        // Preserve any in-memory sessions that already have loaded messages
+        // (e.g. active thread) when remapping list metadata.
+        const loadedById = new Map(
+          prev
+            .filter((s) => s.id !== DRAFT_ID && s.messagesLoaded)
+            .map((s) => [s.id, s])
+        )
+        const merged = chats.map((c) => {
+          const existing = loadedById.get(c.id)
+          if (!existing) return c
+          return {
+            ...c,
+            messages: existing.messages,
+            messagesLoaded: true,
+            messageCount: Math.max(c.messageCount, existing.messages.length),
+          }
+        })
         const draftSession = prev.find(
           (s) => s.id === DRAFT_ID && s.messages.length === 0
         )
-        // Keep a draft slot so "new chat" UX always exists
-        return draftSession ? [draftSession, ...chats] : [emptyDraft(), ...chats]
+        return draftSession ? [draftSession, ...merged] : [emptyDraft(), ...merged]
       })
 
       setActiveId((current) => {
         if (current === DRAFT_ID) return DRAFT_ID
         if (chats.some((c) => c.id === current)) return current
-        return chats[0]?.id ?? DRAFT_ID
+        return DRAFT_ID
       })
     } catch (e) {
       console.error(e)
@@ -152,11 +197,116 @@ export default function ChatPage() {
     } finally {
       setLoading(false)
     }
+  }, [fetchChatPage])
+
+  const loadMoreChats = useCallback(async () => {
+    if (!hasMore || !nextCursor || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    try {
+      const data = await fetchChatPage(nextCursor)
+      const chats = (data.chats ?? []).map(mapListItem)
+
+      setNextCursor(data.nextCursor ?? null)
+      setHasMore(Boolean(data.hasMore))
+
+      setSessions((prev) => {
+        const existingIds = new Set(prev.map((s) => s.id))
+        const fresh = chats.filter((c) => !existingIds.has(c.id))
+        return [...prev, ...fresh]
+      })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [fetchChatPage, hasMore, nextCursor])
+
+  const loadChatMessages = useCallback(async (chatId: string) => {
+    if (chatId === DRAFT_ID) return
+
+    setLoadingMessages(true)
+    try {
+      const { data } = await axios.get(`${API_BASE_CHAT}/${chatId}`, {
+        headers: authHeaders(),
+      })
+      const chat = data.chat as {
+        id: string
+        title: string
+        pinned: boolean
+        updatedAt: string
+        messages: Message[]
+      }
+
+      const messages: Message[] = (chat.messages ?? []).map((m) => ({
+        id: m.id,
+        role: m.role as Role,
+        content: m.content,
+        createdAt:
+          typeof m.createdAt === "string"
+            ? m.createdAt
+            : new Date(m.createdAt).toISOString(),
+      }))
+
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === chatId
+            ? {
+                ...s,
+                title: chat.title,
+                pinned: chat.pinned,
+                updatedAt:
+                  typeof chat.updatedAt === "string"
+                    ? chat.updatedAt
+                    : new Date(chat.updatedAt).toISOString(),
+                messages,
+                messageCount: messages.length,
+                messagesLoaded: true,
+              }
+            : s
+        )
+      )
+    } catch (e) {
+      console.error(e)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to load chat messages"
+      )
+    } finally {
+      setLoadingMessages(false)
+    }
   }, [])
 
   useEffect(() => {
     void loadChats()
   }, [loadChats])
+
+  // Fetch messages when selecting a chat that hasn't been loaded yet
+  useEffect(() => {
+    if (!activeId || activeId === DRAFT_ID) return
+    const session = sessions.find((s) => s.id === activeId)
+    if (!session || session.messagesLoaded) return
+    void loadChatMessages(activeId)
+  }, [activeId, sessions, loadChatMessages])
+
+  // Infinite scroll for chat list
+  useEffect(() => {
+    const el = loadMoreRef.current
+    if (!el) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          void loadMoreChats()
+        }
+      },
+      { root: el.closest('[data-sidebar="content"]') ?? null, rootMargin: "80px" }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [loadMoreChats, sessions.length])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -185,6 +335,11 @@ export default function ChatPage() {
     setActiveId(DRAFT_ID)
     setDraft("")
     setAttachedName(null)
+    setError("")
+  }
+
+  const selectChat = (id: string) => {
+    setActiveId(id)
     setError("")
   }
 
@@ -225,7 +380,6 @@ export default function ChatPage() {
       createdAt: new Date().toISOString(),
     }
 
-    // Optimistic UI
     setSessions((prev) =>
       prev.map((s) => {
         if (s.id !== active.id) return s
@@ -237,6 +391,8 @@ export default function ChatPage() {
               : s.title,
           updatedAt: new Date().toISOString(),
           messages: [...s.messages, optimisticUser],
+          messageCount: s.messageCount + 1,
+          messagesLoaded: true,
         }
       })
     )
@@ -276,16 +432,18 @@ export default function ChatPage() {
         const priorWithoutTemp = (prior?.messages ?? []).filter(
           (m) => m.id !== tempUserId
         )
+        const messages = [...priorWithoutTemp, userMsg, assistantMsg]
 
         const updated: ChatSession = {
           id: chatId,
           title: data.title ?? prior?.title ?? "Chat",
           pinned: prior?.pinned ?? false,
           updatedAt: new Date().toISOString(),
-          messages: [...priorWithoutTemp, userMsg, assistantMsg],
+          messages,
+          messageCount: messages.length,
+          messagesLoaded: true,
         }
 
-        // Keep a fresh draft available after the first message lands
         const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
         return needsDraft ? [emptyDraft(), updated, ...rest] : [updated, ...rest]
       })
@@ -297,13 +455,13 @@ export default function ChatPage() {
           ? (e.response?.data?.message as string) || e.message
           : "Failed to send message"
       )
-      // Roll back optimistic user message
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== active.id) return s
           return {
             ...s,
             messages: s.messages.filter((m) => m.id !== tempUserId),
+            messageCount: Math.max(0, s.messageCount - 1),
           }
         })
       )
@@ -319,6 +477,11 @@ export default function ChatPage() {
       void sendMessage()
     }
   }
+
+  const showEmptyState =
+    (!active || (active.messagesLoaded && active.messages.length === 0)) &&
+    !sending &&
+    !loadingMessages
 
   return (
     <SidebarProvider defaultOpen className="h-svh! min-h-0!">
@@ -365,7 +528,7 @@ export default function ChatPage() {
                     <SidebarMenuItem key={session.id}>
                       <SidebarMenuButton
                         isActive={selected}
-                        onClick={() => setActiveId(session.id)}
+                        onClick={() => selectChat(session.id)}
                         className="h-auto flex-col items-start gap-0.5 py-2"
                       >
                         <span className="flex w-full items-center gap-1.5">
@@ -378,7 +541,7 @@ export default function ChatPage() {
                         </span>
                         <span className="text-xs opacity-70">
                           {formatChatTime(session.updatedAt)} ·{" "}
-                          {session.messages.length} messages
+                          {session.messageCount} messages
                         </span>
                       </SidebarMenuButton>
                       {session.id !== DRAFT_ID && (
@@ -398,13 +561,26 @@ export default function ChatPage() {
                   )
                 })}
               </SidebarMenu>
+
+              {/* Sentinel for infinite scroll */}
+              <div ref={loadMoreRef} className="h-1 w-full" />
+              {loadingMore && (
+                <p className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Loading more…
+                </p>
+              )}
+              {!hasMore && sessions.some((s) => s.id !== DRAFT_ID) && !loading && (
+                <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                  End of chats
+                </p>
+              )}
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
       </Sidebar>
 
       <SidebarInset className="min-h-0 overflow-hidden">
-        {/* Top bar */}
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border/80 px-3 sm:px-4">
           <SidebarTrigger />
           <div className="min-w-0 flex-1">
@@ -427,7 +603,6 @@ export default function ChatPage() {
           </Button>
         </header>
 
-        {/* Messages + floating composer */}
         <div className="relative min-h-0 flex-1">
           <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-8 pb-28 sm:px-6 sm:pb-32">
@@ -437,7 +612,14 @@ export default function ChatPage() {
                 </p>
               )}
 
-              {(!active || active.messages.length === 0) && !sending && (
+              {loadingMessages && (
+                <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading conversation…
+                </div>
+              )}
+
+              {showEmptyState && (
                 <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
                   <p className="font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
                     Memory chat
@@ -453,25 +635,26 @@ export default function ChatPage() {
                 </div>
               )}
 
-              {active?.messages.map((message) =>
-                message.role === "user" ? (
-                  <div key={message.id} className="flex w-full justify-end">
-                    <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-base leading-relaxed text-primary-foreground sm:max-w-[75%]">
+              {!loadingMessages &&
+                active?.messages.map((message) =>
+                  message.role === "user" ? (
+                    <div key={message.id} className="flex w-full justify-end">
+                      <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-base leading-relaxed text-primary-foreground sm:max-w-[75%]">
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      key={message.id}
+                      className="w-full space-y-2 text-base leading-7 text-foreground"
+                    >
+                      <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+                        RecallOS
+                      </p>
                       <p className="whitespace-pre-wrap">{message.content}</p>
                     </div>
-                  </div>
-                ) : (
-                  <div
-                    key={message.id}
-                    className="w-full space-y-2 text-base leading-7 text-foreground"
-                  >
-                    <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
-                      RecallOS
-                    </p>
-                    <p className="whitespace-pre-wrap">{message.content}</p>
-                  </div>
-                )
-              )}
+                  )
+                )}
 
               {sending && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -565,7 +748,7 @@ export default function ChatPage() {
                   onKeyDown={onKeyDown}
                   placeholder="Ask anything about your knowledge base…"
                   rows={1}
-                  disabled={sending}
+                  disabled={sending || loadingMessages}
                   className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-base shadow-none focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
                 />
 
@@ -573,7 +756,7 @@ export default function ChatPage() {
                   type="button"
                   size="icon-sm"
                   className="mr-0.5 shrink-0 rounded-full"
-                  disabled={!draft.trim() || sending}
+                  disabled={!draft.trim() || sending || loadingMessages}
                   onClick={() => void sendMessage()}
                   aria-label="Send message"
                 >
