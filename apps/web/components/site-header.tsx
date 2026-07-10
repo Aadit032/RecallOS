@@ -21,9 +21,9 @@ export function SiteHeader({ variant = "marketing" }: SiteHeaderProps) {
           <ThemeToggle />
           {variant === "marketing" ? (
             <>
-              <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
+              {/* <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
                 <Link href="/chat">Chat</Link>
-              </Button>
+              </Button> */}
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/signin">Sign in</Link>
               </Button>
