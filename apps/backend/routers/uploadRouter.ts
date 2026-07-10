@@ -1,6 +1,6 @@
 import Router from "express"
 import { s3 } from "@repo/minio/client"
-import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
+import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { prismaClient } from "@repo/prisma/client"
 import { xAdd } from "@repo/redis-stream/client"
@@ -82,65 +82,6 @@ uploadRouter.post("/confirm", async (req, res) => {
         res.status(500).json({ message: "Server failed to confirm the upload" + e });
     }
 
-});
-
-
-uploadRouter.get("/documents", async (req, res) => {
-    const userId = req.userId;
-    if (!userId) {
-        res.status(401).json({ message: "Unauthorized" });
-        return;
-    }
-
-    try {
-        const documents = await prismaClient.document.findMany({
-            where: { userId },
-            orderBy: { createdAt: "desc" },
-            select: {
-                id: true,
-                title: true,
-                status: true,
-                ObjectKey: true,
-                createdAt: true,
-                updatedAt: true,
-            },
-        });
-        res.status(200).json({ documents });
-    } catch (e) {
-        console.log("Failed to list documents: ", e);
-        res.status(500).json({ message: "Failed to list documents" });
-    }
-});
-
-uploadRouter.post("/get-file-url", async (req, res) => {
-    const { documentId } = req.body;
-    if (!documentId) {
-        res.status(400).json({ message: "Missing required field: documentId" });
-        return;
-    }
-
-    try{
-        const document = await prismaClient.document.findUnique({
-            where: { id: documentId },
-            select: { ObjectKey: true }
-        });
-
-        if (!document) {
-            res.status(404).json({ message: "Document not found" });
-            return;
-        }
-
-        const command = new GetObjectCommand({
-            Bucket: AWS_BUCKET_NAME,
-            Key: document.ObjectKey
-        });
-
-        const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 5 * 60 });
-        res.status(200).json({ presignedUrl });
-    }catch(e){
-        console.log("Server error while getting presigned url for downloading." + e)
-        res.status(500).json({ message: "Server error while getting presigned url for downloading." + e })
-    }
 });
 
 
