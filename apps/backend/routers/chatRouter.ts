@@ -43,32 +43,58 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
         throw new Error("Failed to embed query");
     }
 
+    // Build sparse query — ensure sorted indices (Qdrant requires ascending order)
+    const rawIndices = Array.from(sparse.indices as Iterable<number>);
+    const rawValues = Array.from(sparse.values as Iterable<number>);
+    const paired = rawIndices.map((idx, i) => ({ idx, val: rawValues[i] ?? 0 }))
+        .filter(p => p.val !== 0)
+        .sort((a, b) => a.idx - b.idx);
     const sparseQuery = {
-        indices: Array.from(sparse.indices as Iterable<number>),
-        values: Array.from(sparse.values as Iterable<number>),
+        indices: paired.map(p => p.idx),
+        values: paired.map(p => p.val),
     };
 
     const denseQuery = Array.from(denseVector as ArrayLike<number>);
 
-    console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense + sparse RRF, limit=${RETRIEVAL_LIMIT}`);
-    const res = await qdrantClient.query(COLLECTION, {
-        prefetch: [
-            {
-                query: denseQuery,
-                using: "dense",
-                limit: RETRIEVAL_LIMIT,
-            },
-            {
-                query: sparseQuery,
-                using: "splade",
-                limit: RETRIEVAL_LIMIT,
-            },
-        ],
-        // Reciprocal Rank Fusion over dense (cosine) + sparse (SPLADE) prefetches
-        query: { fusion: "rrf" },
-        limit: RETRIEVAL_LIMIT,
-        with_payload: true,
-    });
+    // Validate vectors before sending to Qdrant
+    if (denseQuery.some(v => !Number.isFinite(v))) {
+        console.error("[hybridRetrieve] Dense vector contains NaN or Infinity");
+        throw new Error("Dense vector contains invalid values");
+    }
+    if (sparseQuery.indices.length === 0) {
+        console.error("[hybridRetrieve] Sparse vector has no non-zero entries");
+        throw new Error("Sparse vector is empty");
+    }
+
+    console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${RETRIEVAL_LIMIT}`);
+    let res;
+    try {
+        res = await qdrantClient.query(COLLECTION, {
+            prefetch: [
+                {
+                    query: denseQuery,
+                    using: "dense",
+                    limit: RETRIEVAL_LIMIT,
+                },
+                {
+                    query: sparseQuery,
+                    using: "splade",
+                    limit: RETRIEVAL_LIMIT,
+                },
+            ],
+            query: { fusion: "rrf" },
+            limit: RETRIEVAL_LIMIT,
+            with_payload: true,
+        });
+    } catch (qdrantErr: any) {
+        console.error(`[hybridRetrieve] Qdrant query failed:`, {
+            message: qdrantErr.message,
+            status: qdrantErr.status,
+            statusText: qdrantErr.statusText,
+            data: JSON.stringify(qdrantErr.data),
+        });
+        throw qdrantErr;
+    }
 
     const chunks = (res.points ?? []).map((point) => {
         const payload = (point.payload ?? {}) as Record<string, unknown>;
