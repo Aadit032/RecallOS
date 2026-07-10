@@ -61,7 +61,6 @@ type ChatSession = {
   updatedAt: string
   messageCount: number
   messages: Message[]
-  /** True once messages have been fetched (or session is local draft). */
   messagesLoaded: boolean
 }
 
@@ -138,6 +137,7 @@ export default function ChatPage() {
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
 
   const fetchChatPage = useCallback(async (cursor?: string | null) => {
+    console.log(`[chat:fetchChatPage] Fetching chat list${cursor ? ` (cursor=${cursor})` : ""}`);
     const { data } = await axios.get(`${API_BASE_CHAT}/`, {
       headers: authHeaders(),
       params: {
@@ -145,6 +145,7 @@ export default function ChatPage() {
         ...(cursor ? { cursor } : {}),
       },
     })
+    console.log(`[chat:fetchChatPage] Received ${data.chats?.length ?? 0} chats, hasMore=${data.hasMore}, nextCursor=${data.nextCursor ?? "none"}`);
     return data as {
       chats: ChatListItem[]
       nextCursor: string | null
@@ -153,6 +154,7 @@ export default function ChatPage() {
   }, [])
 
   const loadChats = useCallback(async () => {
+    console.log(`[chat:loadChats] Loading chat list`);
     setLoading(true)
     setError("")
     try {
@@ -161,6 +163,7 @@ export default function ChatPage() {
 
       setNextCursor(data.nextCursor ?? null)
       setHasMore(Boolean(data.hasMore))
+      console.log(`[chat:loadChats] Fetched ${chats.length} chats, hasMore=${data.hasMore}`);
 
       setSessions((prev) => {
         // Preserve any in-memory sessions that already have loaded messages
@@ -192,15 +195,20 @@ export default function ChatPage() {
         return DRAFT_ID
       })
     } catch (e) {
-      console.error(e)
+      console.error(`[chat:loadChats] Error:`, e)
       setError("Could not load chats. Sign in and ensure the backend is running.")
     } finally {
+      console.log(`[chat:loadChats] Done`);
       setLoading(false)
     }
   }, [fetchChatPage])
 
   const loadMoreChats = useCallback(async () => {
-    if (!hasMore || !nextCursor || loadingMoreRef.current) return
+    if (!hasMore || !nextCursor || loadingMoreRef.current) {
+      console.log(`[chat:loadMoreChats] Skipping — hasMore=${hasMore}, nextCursor=${nextCursor}, loading=${loadingMoreRef.current}`);
+      return
+    }
+    console.log(`[chat:loadMoreChats] Loading more chats (cursor=${nextCursor})`);
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
@@ -209,14 +217,16 @@ export default function ChatPage() {
 
       setNextCursor(data.nextCursor ?? null)
       setHasMore(Boolean(data.hasMore))
+      console.log(`[chat:loadMoreChats] Loaded ${chats.length} more chats, hasMore=${data.hasMore}`);
 
       setSessions((prev) => {
         const existingIds = new Set(prev.map((s) => s.id))
         const fresh = chats.filter((c) => !existingIds.has(c.id))
+        console.log(`[chat:loadMoreChats] ${fresh.length} new chats added`);
         return [...prev, ...fresh]
       })
     } catch (e) {
-      console.error(e)
+      console.error(`[chat:loadMoreChats] Error:`, e)
     } finally {
       loadingMoreRef.current = false
       setLoadingMore(false)
@@ -224,7 +234,11 @@ export default function ChatPage() {
   }, [fetchChatPage, hasMore, nextCursor])
 
   const loadChatMessages = useCallback(async (chatId: string) => {
-    if (chatId === DRAFT_ID) return
+    if (chatId === DRAFT_ID) {
+      console.log(`[chat:loadChatMessages] Skipping draft chat`);
+      return
+    }
+    console.log(`[chat:loadChatMessages] Loading messages for chatId=${chatId}`);
 
     setLoadingMessages(true)
     try {
@@ -249,6 +263,8 @@ export default function ChatPage() {
             : new Date(m.createdAt).toISOString(),
       }))
 
+      console.log(`[chat:loadChatMessages] Fetched chat: "${chat.title}", ${messages.length} messages`);
+
       setSessions((prev) =>
         prev.map((s) =>
           s.id === chatId
@@ -267,8 +283,9 @@ export default function ChatPage() {
             : s
         )
       )
+      console.log(`[chat:loadChatMessages] State updated for chatId=${chatId}`);
     } catch (e) {
-      console.error(e)
+      console.error(`[chat:loadChatMessages] Error for chatId=${chatId}:`, e)
       setError(
         axios.isAxiosError(e)
           ? (e.response?.data?.message as string) || e.message
@@ -349,6 +366,7 @@ export default function ChatPage() {
     if (!session) return
 
     const nextPinned = !session.pinned
+    console.log(`[chat:togglePin] Toggling pin for chatId=${id}: ${session.pinned} → ${nextPinned}`);
     setSessions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, pinned: nextPinned } : s))
     )
@@ -359,8 +377,9 @@ export default function ChatPage() {
         { pinned: nextPinned },
         { headers: authHeaders() }
       )
+      console.log(`[chat:togglePin] Server confirmed pin=${nextPinned} for chatId=${id}`);
     } catch (e) {
-      console.error(e)
+      console.error(`[chat:togglePin] Error:`, e)
       setSessions((prev) =>
         prev.map((s) => (s.id === id ? { ...s, pinned: !nextPinned } : s))
       )
@@ -369,9 +388,13 @@ export default function ChatPage() {
 
   const sendMessage = async () => {
     const text = draft.trim()
-    if (!text || !active || sending) return
+    if (!text || !active || sending) {
+      console.log(`[chat:sendMessage] Skipping — text="${text}", active=${!!active}, sending=${sending}`);
+      return
+    }
 
     const content = attachedName ? `${text}\n\n📎 ${attachedName}` : text
+    console.log(`[chat:sendMessage] Sending message: activeId="${active.id}", content="${content.slice(0, 120)}${content.length > 120 ? "…" : ""}"`);
     const tempUserId = `temp-user-${crypto.randomUUID()}`
     const optimisticUser: Message = {
       id: tempUserId,
@@ -404,10 +427,12 @@ export default function ChatPage() {
     try {
       const body: { message: string; chatId?: string } = { message: content }
       if (active.id !== DRAFT_ID) body.chatId = active.id
+      console.log(`[chat:sendMessage] POST /message — body.chatId=${body.chatId ?? "none (new session)"}`);
 
       const { data } = await axios.post(`${API_BASE_CHAT}/message`, body, {
         headers: authHeaders(),
       })
+      console.log(`[chat:sendMessage] Response: chatId=${data.chatId}, isNewSession=${data.isNewSession}, sources=${data.sources?.length ?? 0}`);
 
       const chatId: string = data.chatId
       const userMsg: Message = {
@@ -422,6 +447,7 @@ export default function ChatPage() {
         content: data.assistantMessage.content,
         createdAt: data.assistantMessage.createdAt,
       }
+      console.log(`[chat:sendMessage] Assistant response length: ${assistantMsg.content.length} chars`);
 
       setSessions((prev) => {
         const rest = prev.filter((s) => s.id !== active.id && s.id !== chatId)
@@ -449,7 +475,7 @@ export default function ChatPage() {
       })
       setActiveId(chatId)
     } catch (e) {
-      console.error(e)
+      console.error(`[chat:sendMessage] Error:`, e)
       setError(
         axios.isAxiosError(e)
           ? (e.response?.data?.message as string) || e.message

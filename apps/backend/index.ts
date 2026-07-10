@@ -13,12 +13,20 @@ const PORT = process.env.PORT
 const app = express();
 app.use(cors());
 app.use(express.json());
+console.log(`[server] CORS and JSON parser middleware configured`);
 
 app.use("/api/v1/auth", authRouter);
+console.log(`[server] Registered: /api/v1/auth`);
+
 app.use("/api/v1/upload", middleware, uploadRouter);
+console.log(`[server] Registered: /api/v1/upload (with middleware)`);
+
 app.use("/api/v1/download", middleware, downloadRouter);
+console.log(`[server] Registered: /api/v1/download (with middleware)`);
+
 app.use("/api/v1/chat", middleware, chatRouter);
+console.log(`[server] Registered: /api/v1/chat (with middleware)`);
 
 app.listen(PORT, () => {
-  console.log(`Server is listening on ${PORT}`);
+  console.log(`[server] RecallOS backend listening on port ${PORT}`);
 });

@@ -100,6 +100,7 @@ export default function Dashboard() {
   const [docsError, setDocsError] = useState("")
 
   const fetchDocuments = useCallback(async () => {
+    console.log(`[dashboard:fetchDocuments] Fetching document list`);
     setDocsLoading(true)
     setDocsError("")
     try {
@@ -107,11 +108,13 @@ export default function Dashboard() {
       const { data } = await axios.get(`${API_BASE_DOWNLOAD}/list`, {
         headers: { Authorization: "Bearer " + token },
       })
+      console.log(`[dashboard:fetchDocuments] Received ${data.documents?.length ?? 0} documents`);
       setDocuments(data.documents ?? [])
     } catch (e) {
-      console.error(e)
+      console.error(`[dashboard:fetchDocuments] Error:`, e)
       setDocsError("Could not load documents. Sign in and try again.")
     } finally {
+      console.log(`[dashboard:fetchDocuments] Done`);
       setDocsLoading(false)
     }
   }, [])
@@ -139,7 +142,11 @@ export default function Dashboard() {
   }
 
   const handleUpload = async () => {
-    if (!file) return
+    if (!file) {
+      console.log(`[dashboard:handleUpload] No file selected`);
+      return;
+    }
+    console.log(`[dashboard:handleUpload] Starting upload: name="${file.name}", size=${file.size}, type="${file.type}"`);
     setUploading(true)
 
     try {
@@ -158,14 +165,18 @@ export default function Dashboard() {
         }
       )
       setUploadKey(key)
+      console.log(`[dashboard:handleUpload] Got presigned URL and key="${key}"`);
 
       setStatus("Uploading file…")
+      console.log(`[dashboard:handleUpload] PUT to MinIO presigned URL`);
       const res = await axios.put(presignedUrl, file, {
         headers: { "Content-Type": file.type },
       })
+      console.log(`[dashboard:handleUpload] PUT response status=${res.status}`);
 
       if (res.status == 200) {
         setStatus("Confirming upload…")
+        console.log(`[dashboard:handleUpload] POST /confirm — fileName="${file.name}", key="${key}", size=${file.size}`);
         const { data } = await axios.post(
           `${API_BASE_UPLOAD}/confirm`,
           {
@@ -180,22 +191,29 @@ export default function Dashboard() {
           }
         )
         setDocumentId(data.documentId)
+        console.log(`[dashboard:handleUpload] Upload confirmed: documentId=${data.documentId}`);
         setStatus("Upload complete.")
         void fetchDocuments()
       } else {
+        console.warn(`[dashboard:handleUpload] Unexpected PUT status: ${res.status}`);
         setStatus("Upload failed — unexpected response.")
       }
     } catch (e) {
-      console.error(e)
+      console.error(`[dashboard:handleUpload] Error:`, e)
       setStatus("Upload failed.")
     } finally {
       setUploading(false)
+      console.log(`[dashboard:handleUpload] Done`);
     }
   }
 
   const handleDownload = async (key?: string) => {
     const targetKey = key ?? uploadKey
-    if (!targetKey) return
+    if (!targetKey) {
+      console.log(`[dashboard:handleDownload] No key available`);
+      return;
+    }
+    console.log(`[dashboard:handleDownload] Getting download URL for key="${targetKey}"`);
     const token = localStorage.getItem("token")
     const { data } = await axios.post(
       `${API_BASE_DOWNLOAD}/get-download-url`,

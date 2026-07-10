@@ -28,15 +28,18 @@ type RetrievedChunk = {
  * fused with Reciprocal Rank Fusion in Qdrant → top 50.
  */
 async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
+    console.log(`[hybridRetrieve] Starting retrieval for query: "${query.slice(0, 120)}"`);
     const [denseVectors, sparseVectors] = await Promise.all([
         getDenseVectors([query]),
         getSparseVectors([query]),
     ]);
+    console.log(`[hybridRetrieve] Dense vector dims: ${denseVectors[0]?.length ?? 0}, Sparse vector nnz: ${sparseVectors[0]?.indices?.length ?? 0}`);
 
     const denseVector = denseVectors[0];
     const sparse = sparseVectors[0];
 
     if (!denseVector || !sparse) {
+        console.error("[hybridRetrieve] Failed to embed query — no vectors returned");
         throw new Error("Failed to embed query");
     }
 
@@ -47,6 +50,7 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
 
     const denseQuery = Array.from(denseVector as ArrayLike<number>);
 
+    console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense + sparse RRF, limit=${RETRIEVAL_LIMIT}`);
     const res = await qdrantClient.query(COLLECTION, {
         prefetch: [
             {
@@ -66,7 +70,7 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
         with_payload: true,
     });
 
-    return (res.points ?? []).map((point) => {
+    const chunks = (res.points ?? []).map((point) => {
         const payload = (point.payload ?? {}) as Record<string, unknown>;
         return {
             id: String(point.id),
@@ -75,12 +79,19 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
             documentId: (payload.documentId as string | number | undefined) ?? null,
         };
     }).filter((c) => c.text.length > 0);
+
+    console.log(`[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} chunks with text`);
+    return chunks;
 }
 
 function buildSystemPrompt(contextChunks: { text: string; id: string }[]): string {
+    console.log(`[buildSystemPrompt] Building prompt with ${contextChunks.length} context chunks`);
     const context = contextChunks
         .map((c, i) => `[${i + 1}] (id: ${c.id})\n${c.text}`)
         .join("\n\n---\n\n");
+
+    const totalChars = context.length;
+    console.log(`[buildSystemPrompt] Context length: ${totalChars} characters`);
 
     return `You are RecallOS, an assistant that answers questions using the user's organizational knowledge base.
         Use ONLY the context chunks below to answer. If the context is insufficient, say so clearly.
@@ -93,7 +104,9 @@ function buildSystemPrompt(contextChunks: { text: string; id: string }[]): strin
 
 function titleFromMessage(message: string): string {
     const trimmed = message.trim().replace(/\s+/g, " ");
-    return trimmed.length <= 48 ? trimmed : `${trimmed.slice(0, 48)}…`;
+    const title = trimmed.length <= 48 ? trimmed : `${trimmed.slice(0, 48)}…`;
+    console.log(`[titleFromMessage] Generated title: "${title}"`);
+    return title;
 }
 
 
@@ -104,6 +117,7 @@ function titleFromMessage(message: string): string {
  */
 chatRouter.get("/", async (req, res) => {
     const userId = req.userId;
+    console.log(`[GET /chats] userId=${userId}`);
     if (!userId) {
         res.status(401).json({ message: "Unauthorized" });
         return;
@@ -115,11 +129,13 @@ chatRouter.get("/", async (req, res) => {
     });
     const parsed = limitSchema.safeParse(req.query);
     if (!parsed.success) {
+        console.warn(`[GET /chats] Invalid query params: ${JSON.stringify(req.query)}`);
         res.status(422).json({ message: "Invalid query", error: parsed.error });
         return;
     }
 
     const { limit, cursor } = parsed.data;
+    console.log(`[GET /chats] Fetching chats: limit=${limit}, cursor=${cursor ?? "none"}`);
 
     try {
         const rows = await prismaClient.chat.findMany({
@@ -165,6 +181,7 @@ chatRouter.get("/", async (req, res) => {
 chatRouter.get("/:id", async (req, res) => {
     const userId = req.userId;
     const id = req.params.id;
+    console.log(`[GET /chat/:id] userId=${userId}, chatId=${id}`);
 
     try {
         const chat = await prismaClient.chat.findFirst({
@@ -178,13 +195,15 @@ chatRouter.get("/:id", async (req, res) => {
         });
 
         if (!chat) {
+            console.warn(`[GET /chat/:id] Chat not found: ${id}`);
             res.status(404).json({ message: "Chat not found" });
             return;
         }
 
+        console.log(`[GET /chat/:id] Found chat: "${chat.title}", ${chat.messages?.length ?? 0} messages`);
         res.status(200).json({ chat });
     } catch (e) {
-        console.error("Get chat error:", e);
+        console.error(`[GET /chat/:id] Error for chat ${id}:`, e);
         res.status(500).json({
             message: "Failed to get chat",
             error: e instanceof Error ? e.message : e,
@@ -196,6 +215,7 @@ chatRouter.get("/:id", async (req, res) => {
 chatRouter.patch("/:id", async (req, res) => {
     const userId = req.userId;
     const id = req.params.id;
+    console.log(`[PATCH /chat/:id] userId=${userId}, chatId=${id}, body=${JSON.stringify(req.body)}`);
     if (!userId) {
         res.status(401).json({ message: "Unauthorized" });
         return;
@@ -203,6 +223,7 @@ chatRouter.patch("/:id", async (req, res) => {
 
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) {
+        console.warn(`[PATCH /chat/:id] Invalid body for chat ${id}:`, parsed.error);
         res.status(422).json({ message: "Invalid input", error: parsed.error });
         return;
     }
@@ -210,18 +231,21 @@ chatRouter.patch("/:id", async (req, res) => {
     try {
         const existing = await prismaClient.chat.findFirst({ where: { id, userId } });
         if (!existing) {
+            console.warn(`[PATCH /chat/:id] Chat not found: ${id}`);
             res.status(404).json({ message: "Chat not found" });
             return;
         }
 
+        console.log(`[PATCH /chat/:id] Existing title: "${existing.title}", updating with:`, parsed.data);
         const chat = await prismaClient.chat.update({
             where: { id },
             data: parsed.data,
         });
 
+        console.log(`[PATCH /chat/:id] Updated chat: "${chat.title}"`);
         res.status(200).json({ chat });
     } catch (e) {
-        console.error("Patch chat error:", e);
+        console.error(`[PATCH /chat/:id] Error for chat ${id}:`, e);
         res.status(500).json({
             message: "Failed to update chat",
             error: e instanceof Error ? e.message : e,
@@ -233,6 +257,7 @@ chatRouter.patch("/:id", async (req, res) => {
 chatRouter.delete("/:id", async (req, res) => {
     const userId = req.userId;
     const id = req.params.id;
+    console.log(`[DELETE /chat/:id] userId=${userId}, chatId=${id}`);
     if (!userId) {
         res.status(401).json({ message: "Unauthorized" });
         return;
@@ -241,14 +266,17 @@ chatRouter.delete("/:id", async (req, res) => {
     try {
         const existing = await prismaClient.chat.findFirst({ where: { id, userId } });
         if (!existing) {
+            console.warn(`[DELETE /chat/:id] Chat not found: ${id}`);
             res.status(404).json({ message: "Chat not found" });
             return;
         }
 
+        console.log(`[DELETE /chat/:id] Deleting chat "${existing.title}" (${id})`);
         await prismaClient.chat.delete({ where: { id } });
+        console.log(`[DELETE /chat/:id] Deleted chat ${id}`);
         res.status(200).json({ message: "Chat deleted" });
     } catch (e) {
-        console.error("Delete chat error:", e);
+        console.error(`[DELETE /chat/:id] Error:`, e);
         res.status(500).json({
             message: "Failed to delete chat",
             error: e instanceof Error ? e.message : e,
@@ -262,42 +290,52 @@ chatRouter.delete("/:id", async (req, res) => {
  */
 chatRouter.post("/message", async (req, res) => {
     const userId = req.userId;
+    console.log(`[POST /message] Entry — userId=${userId}`);
     if (!userId) {
+        console.warn(`[POST /message] Unauthorized — no userId`);
         res.status(401).json({ message: "Unauthorized" });
         return;
     }
 
     const parsed = messageSchema.safeParse(req.body);
     if (!parsed.success) {
+        console.warn(`[POST /message] Invalid input:`, parsed.error);
         res.status(422).json({ message: "Invalid input", error: parsed.error });
         return;
     }
 
     const { message, chatId } = parsed.data;
+    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}`);
 
     try {
         // 1. Resolve or create chat session (session is created on first message)
+        console.log(`[POST /message] Step 1 — Resolving chat session`);
         let chat =
             chatId != null
                 ? await prismaClient.chat.findFirst({ where: { id: chatId, userId } })
                 : null;
 
         if (chatId && !chat) {
+            console.warn(`[POST /message] Requested chatId ${chatId} not found or not owned by user`);
             res.status(404).json({ message: "Chat not found" });
             return;
         }
 
         const isNewSession = !chat;
         if (!chat) {
+            console.log(`[POST /message] Creating new chat session for userId=${userId}`);
             chat = await prismaClient.chat.create({
                 data: {
                     userId,
                     title: titleFromMessage(message),
                 },
             });
+        } else {
+            console.log(`[POST /message] Using existing chat: id=${chat.id}, title="${chat.title}", pin=${chat.pinned}`);
         }
 
         // 2. Persist user message
+        console.log(`[POST /message] Step 2 — Persisting user message in chat ${chat.id}`);
         const userMessage = await prismaClient.message.create({
             data: {
                 chatId: chat.id,
@@ -305,23 +343,30 @@ chatRouter.post("/message", async (req, res) => {
                 content: message,
             },
         });
+        console.log(`[POST /message] User message persisted: id=${userMessage.id}`);
 
         // 3. Hybrid retrieval (dense + sparse → RRF top 50)
+        console.log(`[POST /message] Step 3 — Hybrid retrieval for: "${message.slice(0, 120)}"`);
         const fusedChunks = await hybridRetrieve(message);
+        console.log(`[POST /message] Hybrid retrieval returned ${fusedChunks.length} fused chunks`);
 
         // 4. Cross-encoder rerank → top 5
+        console.log(`[POST /message] Step 4 — Cross-encoder rerank (top ${RERANK_TOP_K})`);
         const topChunks = await crossEncodeRerank(
             message,
             fusedChunks.map((c) => ({ id: c.id, text: c.text, score: c.score })),
             RERANK_TOP_K
         );
+        console.log(`[POST /message] Rerank returned ${topChunks.length} chunks`);
 
         // 5. Load prior messages for multi-turn context
+        console.log(`[POST /message] Step 5 — Loading history (last 20 messages)`);
         const history = await prismaClient.message.findMany({
             where: { chatId: chat.id },
             orderBy: { createdAt: "asc" },
             take: 20,
         });
+        console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
             { role: "system" as const, content: buildSystemPrompt(topChunks) },
@@ -330,14 +375,19 @@ chatRouter.post("/message", async (req, res) => {
                 content: m.content,
             })),
         ];
+        console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history)`);
 
         // 6. LLM call via OpenRouter
+        console.log(`[POST /message] Step 6 — Calling OpenRouter model=${CHAT_MODEL}`);
+        const startTime = Date.now();
         const llmResponse = await openrouterClient.chat.send({
             chatRequest: {
                 model: CHAT_MODEL,
                 messages: llmMessages,
             },
         });
+        const llmDuration = Date.now() - startTime;
+        console.log(`[POST /message] OpenRouter response received in ${llmDuration}ms`);
 
         const assistantText =
             (typeof llmResponse?.choices?.[0]?.message?.content === "string"
@@ -345,6 +395,9 @@ chatRouter.post("/message", async (req, res) => {
                 : null) ??
             "I couldn't generate a response. Please try again.";
 
+        console.log(`[POST /message] Assistant text length: ${assistantText.length} chars, finish_reason: ${JSON.stringify(llmResponse?.choices?.[0]?.finishReason ?? "unknown")}`);
+
+        console.log(`[POST /message] Persisting assistant message in chat ${chat.id}`);
         const assistantMessage = await prismaClient.message.create({
             data: {
                 chatId: chat.id,
@@ -352,21 +405,25 @@ chatRouter.post("/message", async (req, res) => {
                 content: assistantText,
             },
         });
+        console.log(`[POST /message] Assistant message persisted: id=${assistantMessage.id}`);
 
         // Bump updatedAt; set title on first message of an existing empty-titled chat
+        const shouldSetTitle = isNewSession || chat.title === "New chat";
+        console.log(`[POST /message] Bumping updatedAt (setTitle=${shouldSetTitle})`);
         await prismaClient.chat.update({
             where: { id: chat.id },
             data: {
                 updatedAt: new Date(),
-                ...(isNewSession || chat.title === "New chat"
+                ...(shouldSetTitle
                     ? { title: titleFromMessage(message) }
                     : {}),
             },
         });
 
+        console.log(`[POST /message] Sending 200 response — chatId=${chat.id}, isNewSession=${isNewSession}, sources=${topChunks.length}`);
         res.status(200).json({
             chatId: chat.id,
-            title: isNewSession || chat.title === "New chat" ? titleFromMessage(message) : chat.title,
+            title: shouldSetTitle ? titleFromMessage(message) : chat.title,
             isNewSession,
             userMessage: {
                 id: userMessage.id,
@@ -387,8 +444,9 @@ chatRouter.post("/message", async (req, res) => {
                 text: c.text.slice(0, 400),
             })),
         });
+        console.log(`[POST /message] Done — total pipeline completed`);
     } catch (e) {
-        console.error("Chat message error:", e);
+        console.error(`[POST /message] Pipeline error:`, e);
         res.status(500).json({
             message: "Failed to process chat message",
             error: e instanceof Error ? e.message : e,
