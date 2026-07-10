@@ -82,3 +82,65 @@ export async function xAck(consumerGroup: string, eventId: string):Promise<numbe
         return null;
     }
 }
+
+/**
+ * Claim messages that have been idle for at least minIdleTime milliseconds.
+ * Returns claimed messages in the same shape as xReadGroup.
+ */
+export async function xAutoClaim(
+    consumerGroup: string,
+    consumerId: string,
+    minIdleTime: number,
+    count?: number
+): Promise<streamMessage[]> {
+    console.log(`[redis-stream:xAutoClaim] Claiming — group="${consumerGroup}", consumer="${consumerId}", minIdleTime=${minIdleTime}, count=${count ?? "all"}`);
+    try {
+        const result = await redisClient.xAutoClaim(
+            STREAM_NAME,
+            consumerGroup,
+            consumerId,
+            minIdleTime,
+            "0",
+            count ? { COUNT: count } : undefined
+        );
+        console.log(`[redis-stream:xAutoClaim] Claimed ${result.messages.length} message(s), next="${result.nextId}", deleted=${result.deletedMessages.length}`);
+        return result.messages
+            .filter((msg): msg is NonNullable<typeof msg> => msg !== null)
+            .map(msg => ({
+                id: msg.id,
+                message: { documentId: msg.message.documentId ?? "" },
+            }));
+    } catch (e) {
+        console.error(`[redis-stream:xAutoClaim] Failed:`, e);
+        return [];
+    }
+}
+
+/**
+ * Get per-message pending details (delivery count, idle time, consumer).
+ * Only retrieves messages matching the given IDs when `ids` is provided.
+ */
+export async function xPendingRange(
+    consumerGroup: string,
+    start: string,
+    end: string,
+    count: number
+): Promise<Array<{ id: string; consumer: string; deliveryCount: number }>> {
+    console.log(`[redis-stream:xPendingRange] Pending detail — group="${consumerGroup}", start="${start}", end="${end}", count=${count}`);
+    try {
+        const result = await redisClient.xPending(STREAM_NAME, consumerGroup, {
+            start,
+            end,
+            COUNT: count,
+        });
+        console.log(`[redis-stream:xPendingRange] Got ${result.length} pending item(s)`);
+        return result.map(item => ({
+            id: item.id,
+            consumer: item.consumer,
+            deliveryCount: item.deliveriesCounter,
+        }));
+    } catch (e) {
+        console.error(`[redis-stream:xPendingRange] Failed:`, e);
+        return [];
+    }
+}

@@ -1,4 +1,4 @@
-import { xAck, xReadGroup } from "@repo/redis-stream/client"
+import { xAck, xReadGroup, xAutoClaim, xPendingRange } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
 import { createParseJob, getFinishedJob } from "./parse";
 import { prismaClient } from "@repo/prisma/client";
@@ -18,6 +18,8 @@ const COLLECTION = process.env.COLLECTION as string;
 export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
 
 const MAX_RETRIES = 10;
+const IDLE_THRESHOLD_MS = 60_000;
+const CLAIM_INTERVAL_MS = 30_000;
 
 interface streamMessage {
     id: string,
@@ -27,6 +29,42 @@ interface streamMessage {
 export type Tier = "fast" | "cost_effective" | "agentic" | "agentic_plus";
 
 type PricingTier = "basic" | "pro" | "max"
+
+async function claimStaleJobs() {
+    console.log(`[workers:claimStaleJobs] Checking for stale jobs (idle > ${IDLE_THRESHOLD_MS}ms)`);
+    const claimed = await xAutoClaim(CONSUMER_GROUP, WORKER_ID, IDLE_THRESHOLD_MS, 10);
+    
+    if (claimed.length === 0) {
+        console.log(`[workers:claimStaleJobs] No stale jobs to claim`);
+        return;
+    }
+    for (const msg of claimed) {
+        console.log(`[workers:claimStaleJobs] Claimed message: id="${msg.id}", documentId="${msg.message.documentId}"`);
+        
+        const pendingInfo = await xPendingRange(CONSUMER_GROUP, msg.id, msg.id, 1);
+        const deliveryCount = pendingInfo?.[0]?.deliveryCount ?? 1;
+
+        if (deliveryCount > MAX_RETRIES) {
+            console.log(`[workers:claimStaleJobs] deliveryCount ${deliveryCount} > MAX_RETRIES ${MAX_RETRIES} — FAILING document ${msg.message.documentId}`);
+            await prismaClient.document.update({
+                where: { id: msg.message.documentId },
+                data: { status: "FAILED" },
+            });
+        
+            await xAck(CONSUMER_GROUP, msg.id);
+        
+        } else {
+            console.log(`[workers:claimStaleJobs] deliveryCount ${deliveryCount} <= ${MAX_RETRIES} — processing document ${msg.message.documentId}`);
+        
+            try {
+                await processDocuments(msg, "basic");
+                await xAck(CONSUMER_GROUP, msg.id);
+            } catch (e) {
+                console.log(`[workers:claimStaleJobs] Error processing claimed document:`, e);
+            }
+        }
+    }
+}
 
 async function workers(){    
     while(true){
@@ -227,4 +265,5 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 }
 
 // ========== RUN WORKERS ============
+setInterval(claimStaleJobs, CLAIM_INTERVAL_MS);
 await workers();
