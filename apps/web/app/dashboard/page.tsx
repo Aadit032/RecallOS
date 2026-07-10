@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react"
 import axios from "axios"
 import Link from "next/link"
 import {
-  Brain,
   Download,
   FileText,
   Loader2,
@@ -212,13 +211,12 @@ export default function Dashboard() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          <Link href="/" className="flex items-center gap-2 tracking-tight">
-            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Brain className="size-4" />
+      <header className="sticky top-0 z-50 border-b border-border/80 bg-background/75 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
+          <Link href="/" className="flex items-center gap-2.5 tracking-tight">
+            <span className="font-display text-lg font-medium tracking-tight">
+              RecallOS
             </span>
-            <span className="font-display text-lg tracking-wide">RecallOS</span>
           </Link>
 
           <nav className="flex items-center gap-1 sm:gap-2">
@@ -233,10 +231,13 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-12 sm:px-6 sm:py-16">
-        <div className="mb-12 flex max-w-2xl flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:max-w-none">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12 sm:px-6 sm:py-16">
+        <div className="mb-12 flex max-w-2xl flex-col gap-4 sm:max-w-none sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-2xl">
-            <h1 className="font-script text-6xl leading-none text-foreground sm:text-7xl md:text-8xl">
+            <p className="mb-3 font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+              Library
+            </p>
+            <h1 className="font-display text-5xl leading-[1.05] font-medium tracking-tight text-foreground sm:text-6xl md:text-7xl">
               Dashboard
             </h1>
             <p className="mt-4 text-lg text-muted-foreground">
@@ -247,7 +248,7 @@ export default function Dashboard() {
               . Files are stored, parsed, and queued for indexing.
             </p>
           </div>
-          <Button variant="outline" className="shrink-0" asChild>
+          <Button variant="outline" className="shrink-0 border-border/90 bg-card/60" asChild>
             <Link href="/chat">
               <MessageSquare className="size-4" />
               Open chat
@@ -390,21 +391,29 @@ export default function Dashboard() {
             )}
           </section>
 
-          <aside className="self-start lg:col-span-2 lg:sticky lg:top-20">
+          <aside className="memory-glow self-start rounded-xl border border-border/80 bg-card/70 p-6 lg:sticky lg:top-20 lg:col-span-2">
             <h2 className="font-display text-2xl font-medium tracking-tight">
               Pipeline
             </h2>
             <p className="mt-1 text-base text-muted-foreground">
               What happens after you upload.
             </p>
-            <ol className="mt-8 space-y-6">
-              {pipeline.map((item) => (
-                <li key={item.step} className="flex gap-4">
-                  <span className="font-mono text-sm font-medium text-muted-foreground">
-                    {item.step}
+            <ol className="mt-8 space-y-0">
+              {pipeline.map((item, index) => (
+                <li key={item.step} className="relative flex gap-4 pb-6 last:pb-0">
+                  {index < pipeline.length - 1 && (
+                    <span
+                      className="absolute top-6 bottom-0 left-[0.55rem] w-px bg-border"
+                      aria-hidden
+                    />
+                  )}
+                  <span className="relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 font-mono text-[10px] font-semibold text-muted-foreground">
+                    {index + 1}
                   </span>
                   <div>
-                    <p className="font-semibold leading-none">{item.title}</p>
+                    <p className="font-medium leading-none tracking-tight">
+                      {item.title}
+                    </p>
                     <p className="mt-1.5 text-sm text-muted-foreground">
                       {item.body}
                     </p>
@@ -416,7 +425,7 @@ export default function Dashboard() {
         </div>
 
         {/* Documents library */}
-        <section className="mt-20 space-y-6 border-t pt-12">
+        <section className="mt-20 space-y-6 border-t border-border/80 pt-12">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="font-display text-3xl font-medium tracking-tight">
@@ -431,6 +440,7 @@ export default function Dashboard() {
               size="sm"
               onClick={() => void fetchDocuments()}
               disabled={docsLoading}
+              className="border-border/90 bg-card/60"
             >
               <RefreshCw
                 className={cn("size-3.5", docsLoading && "animate-spin")}
@@ -451,22 +461,31 @@ export default function Dashboard() {
           )}
 
           {!docsLoading && !docsError && documents.length === 0 && (
-            <p className="text-base text-muted-foreground">
-              No documents yet. Upload a file above to get started.
-            </p>
+            <div className="rounded-xl border border-dashed border-border/90 bg-card/40 px-6 py-12 text-center">
+              <p className="font-display text-xl text-foreground">
+                No documents yet
+              </p>
+              <p className="mt-2 text-base text-muted-foreground">
+                Upload a file above to start building memory.
+              </p>
+            </div>
           )}
 
           {!docsLoading && documents.length > 0 && (
-            <ul className="divide-y border-y">
+            <ul className="divide-y divide-border/80 overflow-hidden rounded-xl border border-border/80 bg-card/50">
               {documents.map((doc) => (
                 <li
                   key={doc.id}
-                  className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
                 >
                   <div className="flex min-w-0 items-start gap-3">
-                    <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                    <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
+                      <FileText className="size-4" />
+                    </span>
                     <div className="min-w-0">
-                      <p className="truncate font-semibold">{doc.title}</p>
+                      <p className="truncate font-medium tracking-tight">
+                        {doc.title}
+                      </p>
                       <p className="text-sm text-muted-foreground">
                         {formatDate(doc.createdAt)}
                       </p>

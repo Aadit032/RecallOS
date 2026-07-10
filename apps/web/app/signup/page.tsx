@@ -4,18 +4,10 @@ import { useRef, useState } from "react"
 import axios from "axios"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Brain, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
@@ -49,38 +41,40 @@ export default function Signup() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b bg-background/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          <Link
-            href="/"
-            className="flex items-center gap-2 tracking-tight"
-          >
-            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Brain className="size-4" />
+      <header className="border-b border-border/80 bg-background/75 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
+          <Link href="/" className="flex items-center gap-2.5 tracking-tight">
+            <span className="font-display text-lg font-medium tracking-tight">
+              RecallOS
             </span>
-            <span className="font-display text-lg tracking-wide">RecallOS</span>
           </Link>
           <ThemeToggle />
         </div>
       </header>
 
-      <main className="flex flex-1 items-center justify-center px-4 py-16">
-        <Card className="w-full max-w-md gap-0 py-0 shadow-sm">
-          <CardHeader className="space-y-2 border-b px-6 py-8">
-            <CardTitle className="font-display text-3xl font-normal tracking-tight sm:text-4xl">
-              Create your account
-            </CardTitle>
-            <CardDescription className="text-base">
-              Start building{" "}
-              <span className="font-script text-xl">searchable memory</span> for
-              your organization.
-            </CardDescription>
-          </CardHeader>
+      <main className="relative flex flex-1 items-center justify-center px-4 py-16">
+        <div className="archive-grid pointer-events-none absolute inset-0 opacity-30" />
+        <div className="memory-glow relative w-full max-w-md overflow-hidden rounded-xl border border-border/80 bg-card">
+          <div className="border-b border-border/80 px-6 py-8 sm:px-8">
+            <p className="mb-2 font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+              Create account
+            </p>
+            <h1 className="font-display text-3xl font-medium tracking-tight sm:text-4xl">
+              Start your archive
+            </h1>
+            <p className="mt-2 text-base text-muted-foreground">
+              Build{" "}
+              <span className="font-script text-xl text-foreground">
+                searchable memory
+              </span>{" "}
+              for your organization.
+            </p>
+          </div>
 
           <form onSubmit={handleAuth}>
-            <CardContent className="space-y-5 px-6 py-8">
+            <div className="space-y-5 px-6 py-8 sm:px-8">
               <div className="space-y-2">
-                <Label htmlFor="username" className="text-sm font-semibold">
+                <Label htmlFor="username" className="text-sm font-medium">
                   Username
                 </Label>
                 <Input
@@ -89,11 +83,11 @@ export default function Signup() {
                   placeholder="Choose a username"
                   autoComplete="username"
                   required
-                  className="h-11"
+                  className="h-11 bg-background/80"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-sm font-semibold">
+                <Label htmlFor="password" className="text-sm font-medium">
                   Password
                 </Label>
                 <Input
@@ -103,18 +97,20 @@ export default function Signup() {
                   placeholder="Choose a password"
                   autoComplete="new-password"
                   required
-                  className="h-11"
+                  className="h-11 bg-background/80"
                 />
               </div>
               {error && (
-                <p className="text-sm font-medium text-destructive">{error}</p>
+                <p className="text-sm font-medium text-destructive" role="alert">
+                  {error}
+                </p>
               )}
-            </CardContent>
+            </div>
 
-            <CardFooter className="flex flex-col gap-4 border-t px-6 py-6">
+            <div className="flex flex-col gap-4 border-t border-border/80 px-6 py-6 sm:px-8">
               <Button
                 type="submit"
-                className="h-11 w-full text-base font-semibold"
+                className="h-11 w-full text-base font-medium"
                 disabled={loading}
               >
                 {loading ? (
@@ -130,14 +126,14 @@ export default function Signup() {
                 Already have an account?{" "}
                 <Link
                   href="/signin"
-                  className="font-semibold text-foreground underline-offset-4 hover:underline"
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
                 >
                   Sign in
                 </Link>
               </p>
-            </CardFooter>
+            </div>
           </form>
-        </Card>
+        </div>
       </main>
     </div>
   )

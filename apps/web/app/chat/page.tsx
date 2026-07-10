@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
-  Brain,
   FileText,
   Mic,
   MicOff,
@@ -40,7 +39,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
 
 type Role = "user" | "assistant"
 
@@ -256,13 +254,12 @@ export default function ChatPage() {
     <SidebarProvider defaultOpen className="h-svh! min-h-0!">
       <Sidebar collapsible="offcanvas" className="border-r">
         <SidebarHeader className="gap-3 border-b border-sidebar-border p-3">
-          <div className="flex items-center gap-2 px-1">
-            <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-              <Brain className="size-4" />
+          <div className="flex items-center gap-2.5 px-1">
+            <span className="font-display text-base font-medium tracking-tight">
+              RecallOS
             </span>
-            <span className="font-semibold tracking-tight">RecallOS</span>
           </div>
-          <Button className="w-full justify-start gap-2" onClick={createChat}>
+          <Button className="w-full justify-start gap-2 font-medium" onClick={createChat}>
             <SquarePen className="size-4" />
             New chat
           </Button>
@@ -331,10 +328,10 @@ export default function ChatPage() {
 
       <SidebarInset className="min-h-0 overflow-hidden">
         {/* Top bar */}
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:px-4">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border/80 px-3 sm:px-4">
           <SidebarTrigger />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">
+            <h1 className="font-display truncate text-base font-medium tracking-tight sm:text-lg">
               {active?.title ?? "Chat"}
             </h1>
           </div>
@@ -360,11 +357,15 @@ export default function ChatPage() {
             ref={scrollRef}
             className="absolute inset-0 overflow-y-auto"
           >
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 pt-8 pb-44 sm:px-6 sm:pb-48">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-8 pb-28 sm:px-6 sm:pb-32">
               {(!active || active.messages.length === 0) && (
                 <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-                  <span className="text-3xl font-semibold tracking-tight sm:text-4xl">
-                    Ask your memory
+                  <p className="font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+                    Memory chat
+                  </p>
+                  <span className="font-display text-3xl font-medium tracking-tight sm:text-4xl">
+                    Ask your{" "}
+                    <span className="font-script text-foreground">memory</span>
                   </span>
                   <p className="max-w-md text-muted-foreground">
                     Query documents, notes, and organizational knowledge. Answers
@@ -373,36 +374,32 @@ export default function ChatPage() {
                 </div>
               )}
 
-              {active?.messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={cn(
-                    "flex w-full",
-                    message.role === "user" ? "justify-end" : "justify-start"
-                  )}
-                >
+              {active?.messages.map((message) =>
+                message.role === "user" ? (
+                  <div key={message.id} className="flex w-full justify-end">
+                    <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-base leading-relaxed text-primary-foreground sm:max-w-[75%]">
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    </div>
+                  </div>
+                ) : (
                   <div
-                    className={cn(
-                      "max-w-[85%] rounded-2xl px-4 py-3 text-base leading-relaxed sm:max-w-[75%]",
-                      message.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-foreground"
-                    )}
+                    key={message.id}
+                    className="w-full space-y-2 text-base leading-7 text-foreground"
                   >
-                    <p className="mb-1 text-xs font-semibold opacity-70">
-                      {message.role === "user" ? "You" : "RecallOS"}
+                    <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+                      RecallOS
                     </p>
                     <p className="whitespace-pre-wrap">{message.content}</p>
                   </div>
-                </div>
-              ))}
+                )
+              )}
               <div ref={bottomRef} className="h-px w-full shrink-0" />
             </div>
           </div>
 
           {/* Composer floats over the scroll area so messages pass under it */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/95 to-transparent pt-10">
-            <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-4 sm:px-6 sm:pb-6">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/95 to-transparent pt-5 pb-3">
+            <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 sm:px-6">
               {attachedName && (
                 <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
                   <FileText className="size-3.5" />
@@ -417,92 +414,89 @@ export default function ChatPage() {
                 </div>
               )}
 
-              <div className="rounded-2xl border bg-background/90 p-2 shadow-lg backdrop-blur-sm focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
+              {listening && (
+                <p className="mb-2 text-center text-xs font-medium text-muted-foreground">
+                  Listening… (UI only)
+                </p>
+              )}
+
+              {/* Single-line composer: actions left, input center, send right */}
+              <div className="memory-glow flex items-center gap-1 rounded-full border border-border/80 bg-background/90 p-1.5 backdrop-blur-sm focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,application/pdf,image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    setAttachedName(f?.name ?? null)
+                    e.target.value = ""
+                  }}
+                />
+                <div className="flex shrink-0 items-center gap-0.5 pl-0.5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="rounded-full"
+                        onClick={() => fileRef.current?.click()}
+                        aria-label="Upload file"
+                      >
+                        <Plus className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Upload a file</TooltipContent>
+                  </Tooltip>
+
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant={listening ? "secondary" : "ghost"}
+                        size="icon-sm"
+                        className="rounded-full"
+                        onClick={() => setListening((v) => !v)}
+                        aria-label={
+                          listening ? "Stop microphone" : "Use microphone"
+                        }
+                      >
+                        {listening ? (
+                          <MicOff className="size-4" />
+                        ) : (
+                          <Mic className="size-4" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {listening ? "Stop listening" : "Voice input"}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+
                 <Textarea
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={onKeyDown}
                   placeholder="Ask anything about your knowledge base…"
                   rows={1}
-                  className="min-h-[48px] max-h-40 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0 md:text-base"
+                  className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-base shadow-none focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
                 />
 
-                <div className="flex items-center justify-between gap-2 px-1 pt-1">
-                  <div className="flex items-center gap-1">
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      className="hidden"
-                      accept=".pdf,application/pdf,image/*"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0]
-                        setAttachedName(f?.name ?? null)
-                        e.target.value = ""
-                      }}
-                    />
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => fileRef.current?.click()}
-                          aria-label="Upload file"
-                        >
-                          <Plus className="size-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Upload a file</TooltipContent>
-                    </Tooltip>
-
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant={listening ? "secondary" : "ghost"}
-                          size="icon"
-                          onClick={() => setListening((v) => !v)}
-                          aria-label={
-                            listening ? "Stop microphone" : "Use microphone"
-                          }
-                        >
-                          {listening ? (
-                            <MicOff className="size-4" />
-                          ) : (
-                            <Mic className="size-4" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {listening ? "Stop listening" : "Voice input"}
-                      </TooltipContent>
-                    </Tooltip>
-
-                    {listening && (
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Listening… (UI only)
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="hidden text-xs text-muted-foreground sm:inline">
-                      Enter to send
-                    </span>
-                    <Button
-                      type="button"
-                      size="icon"
-                      disabled={!draft.trim()}
-                      onClick={sendMessage}
-                      aria-label="Send message"
-                    >
-                      <Send className="size-4" />
-                    </Button>
-                  </div>
-                </div>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  className="mr-0.5 shrink-0 rounded-full"
+                  disabled={!draft.trim()}
+                  onClick={sendMessage}
+                  aria-label="Send message"
+                >
+                  <Send className="size-4" />
+                </Button>
               </div>
 
-              <p className="mt-2 text-center text-xs text-muted-foreground">
+              <p className="mt-1.5 text-center text-xs text-muted-foreground">
                 <Paperclip className="mr-1 inline size-3" />
                 Chat is UI-seeded for now — retrieval will plug in next.
               </p>

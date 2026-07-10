@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { Fraunces } from "next/font/google"
 import localFont from "next/font/local"
 
 import { ThemeProvider } from "@/components/theme-provider"
@@ -13,6 +14,12 @@ const geistSans = localFont({
 const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
   variable: "--font-geist-mono",
+})
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  axes: ["SOFT", "WONK", "opsz"],
+  display: "swap",
 })
 
 export const metadata: Metadata = {
@@ -30,7 +37,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable}`}
+      className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable}`}
     >
       <body className="font-sans min-h-screen antialiased">
         <ThemeProvider
