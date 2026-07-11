@@ -1,10 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import axios from "axios"
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   FileText,
   Folder,
   FolderInput,
@@ -42,6 +44,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -163,6 +166,10 @@ export default function ChatPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
+  const [showChats, setShowChats] = useState(true)
+  const [showProjects, setShowProjects] = useState(true)
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set())
+  const [showCreateInput, setShowCreateInput] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [creatingProject, setCreatingProject] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
@@ -389,17 +396,32 @@ export default function ChatPage() {
     return () => observer.disconnect()
   }, [loadMoreChats, sessions.length])
 
-  const filtered = useMemo(() => {
+  const sortSessions = (a: ChatSession, b: ChatSession) => {
+    if (a.id === DRAFT_ID) return -1
+    if (b.id === DRAFT_ID) return 1
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    return +new Date(b.updatedAt) - +new Date(a.updatedAt)
+  }
+
+  const unfiledChats = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const list = sessions.filter((s) =>
-      q ? s.title.toLowerCase().includes(q) : true
-    )
-    return [...list].sort((a, b) => {
-      if (a.id === DRAFT_ID) return -1
-      if (b.id === DRAFT_ID) return 1
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-      return +new Date(b.updatedAt) - +new Date(a.updatedAt)
-    })
+    return sessions
+      .filter((s) => !s.projectId && (q ? s.title.toLowerCase().includes(q) : true))
+      .sort(sortSessions)
+  }, [sessions, query])
+
+  const projectChatsMap = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const map = new Map<string, ChatSession[]>()
+    for (const s of sessions) {
+      if (!s.projectId) continue
+      if (q && !s.title.toLowerCase().includes(q)) continue
+      const arr = map.get(s.projectId) ?? []
+      arr.push(s)
+      map.set(s.projectId, arr)
+    }
+    for (const arr of map.values()) arr.sort(sortSessions)
+    return map
   }, [sessions, query])
 
   useEffect(() => {
@@ -783,137 +805,225 @@ export default function ChatPage() {
 
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>Projects</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <div className="mb-2 flex gap-1.5 px-1">
-                <input
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault()
-                      void createProject()
-                    }
+            <SidebarGroupLabel asChild>
+              <button
+                onClick={() => setShowProjects(!showProjects)}
+                className="flex w-full cursor-pointer items-center gap-1.5"
+              >
+                <span className="">Projects</span>
+                {showProjects ? (
+                  <ChevronDown className="size-3" />
+                ) : (
+                  <ChevronRight className="size-3" />
+                )}
+                <span className="text-[10px] opacity-60">{projects.length}</span>
+                <span
+                  className="ml-auto flex size-3.5 items-center justify-center rounded opacity-60 hover:opacity-100"
+                  title={showCreateInput ? "Close" : "New project"}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowCreateInput((v) => !v)
                   }}
-                  placeholder="New project…"
-                  className="h-8 min-w-0 flex-1 rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 shrink-0 px-2"
-                  disabled={!newProjectName.trim() || creatingProject}
-                  onClick={() => void createProject()}
-                  title="Create project"
                 >
-                  {creatingProject ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <FolderPlus className="size-3.5" />
-                  )}
-                </Button>
-              </div>
-              {projects.length === 0 ? (
-                <p className="px-2 py-2 text-xs text-muted-foreground">
-                  No projects yet. Create one to organize chats and set a project system prompt.
-                </p>
-              ) : (
-                <SidebarMenu>
-                  {projects.map((project) => (
-                    <SidebarMenuItem key={project.id}>
-                      <SidebarMenuButton
-                        className="h-auto items-center gap-2 py-1.5"
-                        onClick={() => openEditProject(project)}
-                      >
-                        <Folder className="size-3.5 shrink-0 opacity-70" />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                          {project.name}
-                        </span>
-                        {typeof project.chatCount === "number" && (
-                          <span className="text-[10px] opacity-60">
-                            {project.chatCount}
-                          </span>
-                        )}
-                      </SidebarMenuButton>
-                      <SidebarMenuAction
-                        showOnHover
-                        title="Edit project"
-                        onClick={() => openEditProject(project)}
-                      >
-                        <Settings2 className="size-3.5" />
-                      </SidebarMenuAction>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              )}
-              {editingProject && (
-                <div className="mt-2 space-y-2 rounded-md border border-sidebar-border bg-background/80 p-2">
-                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                    Edit project
-                  </p>
-                  <input
-                    value={editProjectName}
-                    onChange={(e) => setEditProjectName(e.target.value)}
-                    className="h-8 w-full rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    placeholder="Project name"
-                  />
-                  <textarea
-                    value={editProjectPrompt}
-                    onChange={(e) => setEditProjectPrompt(e.target.value)}
-                    rows={3}
-                    placeholder="Extra system prompt for chats in this project…"
-                    className="w-full resize-y rounded-md border border-sidebar-border bg-background px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                  />
-                  <div className="flex flex-wrap gap-1.5">
+                  <Plus className="size-3" />
+                </span>
+              </button>
+            </SidebarGroupLabel>
+            {showProjects && (
+              <SidebarGroupContent>
+                {showCreateInput && (
+                  <div className="mb-2 flex gap-1.5 px-1">
+                    <input
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          void createProject()
+                        }
+                      }}
+                      placeholder="New project…"
+                      className="h-8 min-w-0 flex-1 rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    />
                     <Button
                       size="sm"
-                      className="h-7 px-2 text-xs"
-                      disabled={savingProject || !editProjectName.trim()}
-                      onClick={() => void saveProject()}
+                      variant="outline"
+                      className="h-8 shrink-0 px-2"
+                      disabled={!newProjectName.trim() || creatingProject}
+                      onClick={() => {
+                        void createProject()
+                        setShowCreateInput(false)
+                      }}
+                      title="Create project"
                     >
-                      {savingProject ? (
-                        <Loader2 className="size-3 animate-spin" />
+                      {creatingProject ? (
+                        <Loader2 className="size-3.5 animate-spin" />
                       ) : (
-                        "Save"
+                        <FolderPlus className="size-3.5" />
                       )}
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setEditingProject(null)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                      onClick={() => void deleteProject(editingProject.id)}
-                    >
-                      Delete
-                    </Button>
                   </div>
-                </div>
-              )}
-            </SidebarGroupContent>
+                )}
+                {projects.length === 0 ? (
+                  <p className="px-2 py-2 text-xs text-muted-foreground">
+                    No projects yet. Create one to organize chats and set a project system prompt.
+                  </p>
+                ) : (
+                  <SidebarMenu>
+                    {projects.map((project) => {
+                      const expanded = expandedProjectIds.has(project.id)
+                      const projectChats = projectChatsMap.get(project.id) ?? []
+                      return (
+                        <Fragment key={project.id}>
+                          <SidebarMenuItem>
+                            <SidebarMenuButton
+                              className="h-auto items-center gap-2 py-1.5"
+                              onClick={() =>
+                                setExpandedProjectIds((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(project.id))
+                                    next.delete(project.id)
+                                  else next.add(project.id)
+                                  return next
+                                })
+                              }
+                            >
+                              <Folder className="size-3.5 shrink-0 opacity-70" />
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                {project.name}
+                              </span>
+                              {expanded ? (
+                                <ChevronDown className="size-3 shrink-0 opacity-70" />
+                              ) : (
+                                <ChevronRight className="size-3 shrink-0 opacity-70" />
+                              )}
+                              {typeof project.chatCount === "number" && (
+                                <span className="text-[10px] opacity-60">
+                                  {project.chatCount}
+                                </span>
+                              )}
+                            </SidebarMenuButton>
+                            <SidebarMenuAction
+                              showOnHover
+                              title="Edit project"
+                              onClick={() => openEditProject(project)}
+                            >
+                              <Settings2 className="size-3.5" />
+                            </SidebarMenuAction>
+                          </SidebarMenuItem>
+                          {expanded &&
+                            projectChats.map((chat) => (
+                              <SidebarMenuItem key={chat.id} className="pl-8">
+                                <SidebarMenuButton
+                                  isActive={chat.id === active?.id}
+                                  onClick={() => selectChat(chat.id)}
+                                  className="h-auto py-1.5"
+                                >
+                                  <span className="truncate text-sm">
+                                    {chat.title}
+                                  </span>
+                                </SidebarMenuButton>
+                                <SidebarMenuAction
+                                  showOnHover
+                                  title="Remove from project"
+                                  onClick={() =>
+                                    void moveToProject(chat.id, null)
+                                  }
+                                >
+                                  <FolderInput className="size-3.5" />
+                                </SidebarMenuAction>
+                              </SidebarMenuItem>
+                            ))}
+                        </Fragment>
+                      )
+                    })}
+                  </SidebarMenu>
+                )}
+                {editingProject && (
+                  <div className="mt-2 space-y-2 rounded-md border border-sidebar-border bg-background/80 p-2">
+                    <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                      Edit project
+                    </p>
+                    <input
+                      value={editProjectName}
+                      onChange={(e) => setEditProjectName(e.target.value)}
+                      className="h-8 w-full rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      placeholder="Project name"
+                    />
+                    <textarea
+                      value={editProjectPrompt}
+                      onChange={(e) => setEditProjectPrompt(e.target.value)}
+                      rows={3}
+                      placeholder="Extra system prompt for chats in this project…"
+                      className="w-full resize-y rounded-md border border-sidebar-border bg-background px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    />
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        disabled={savingProject || !editProjectName.trim()}
+                        onClick={() => void saveProject()}
+                      >
+                        {savingProject ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          "Save"
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setEditingProject(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                        onClick={() => void deleteProject(editingProject.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </SidebarGroupContent>
+            )}
           </SidebarGroup>
 
           <SidebarGroup>
-            <SidebarGroupLabel>Chats</SidebarGroupLabel>
-            <SidebarGroupContent>
+            <SidebarGroupLabel asChild>
+              <button
+                onClick={() => setShowChats(!showChats)}
+                className="flex w-full cursor-pointer items-center gap-1.5"
+              >
+                <span>Chats</span>
+                {showChats ? (
+                  <ChevronDown className="size-3" />
+                ) : (
+                  <ChevronRight className="size-3" />
+                )}
+                <span className="ml-auto text-[10px] opacity-60">
+                  {unfiledChats.length}
+                </span>
+              </button>
+            </SidebarGroupLabel>
+            {showChats && (
+              <SidebarGroupContent>
               <SidebarMenu>
                 {loading && sessions.length <= 1 && (
                   <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                     Loading chats…
                   </p>
                 )}
-                {filtered.length === 0 && !loading && (
+                {unfiledChats.length === 0 && !loading && (
                   <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                     No chats match your search.
                   </p>
                 )}
-                {filtered.map((session) => {
+                {unfiledChats.map((session) => {
                   const selected = session.id === active?.id
                   return (
                     <SidebarMenuItem key={session.id}>
@@ -1056,6 +1166,7 @@ export default function ChatPage() {
                 </p>
               )}
             </SidebarGroupContent>
+            )}
           </SidebarGroup>
         </SidebarContent>
       </Sidebar>

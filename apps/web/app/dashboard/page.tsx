@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import axios from "axios"
 import Link from "next/link"
 import {
+  ChevronDown,
   Download,
   FileText,
   Loader2,
@@ -100,24 +101,33 @@ export default function Dashboard() {
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
 
-  const fetchDocuments = useCallback(async () => {
-    console.log(`[dashboard:fetchDocuments] Fetching document list`);
-    setDocsLoading(true)
+  const fetchDocuments = useCallback(async (cursor?: string) => {
+    const isInitial = cursor === undefined;
+    console.log(`[dashboard:fetchDocuments] ${isInitial ? "Initial load" : "Load more"}, cursor="${cursor ?? "none"}"`);
+    if (isInitial) setDocsLoading(true)
+    else setLoadingMore(true)
     setDocsError("")
     try {
       const token = localStorage.getItem("token")
+      const params: Record<string, string | number> = { limit: 10 }
+      if (cursor) params.cursor = cursor
       const { data } = await axios.get(`${API_BASE_DOWNLOAD}/list`, {
+        params,
         headers: { Authorization: "Bearer " + token },
       })
-      console.log(`[dashboard:fetchDocuments] Received ${data.documents?.length ?? 0} documents`);
-      setDocuments(data.documents ?? [])
+      console.log(`[dashboard:fetchDocuments] Received ${data.documents?.length ?? 0} documents, nextCursor=${data.nextCursor}`);
+      if (isInitial) setDocuments(data.documents ?? [])
+      else setDocuments(prev => [...prev, ...(data.documents ?? [])])
+      setNextCursor(data.nextCursor ?? null)
     } catch (e) {
       console.error(`[dashboard:fetchDocuments] Error:`, e)
       setDocsError("Could not load documents. Sign in and try again.")
     } finally {
-      console.log(`[dashboard:fetchDocuments] Done`);
-      setDocsLoading(false)
+      if (isInitial) setDocsLoading(false)
+      else setLoadingMore(false)
     }
   }, [])
 
@@ -208,6 +218,10 @@ export default function Dashboard() {
       console.log(`[dashboard:handleUpload] Done`);
     }
   }
+
+  const loadMore = useCallback(() => {
+    if (nextCursor && !loadingMore) void fetchDocuments(nextCursor)
+  }, [nextCursor, loadingMore, fetchDocuments])
 
   const handleDownload = async (key?: string) => {
     const targetKey = key ?? uploadKey
@@ -528,11 +542,19 @@ export default function Dashboard() {
           )}
 
           {!docsLoading && documents.length > 0 && (
-            <ul className="divide-y divide-border/80 overflow-hidden rounded-xl border border-border/80 bg-card/50">
-              {documents.map((doc) => (
+            <>
+            <ul className="overflow-hidden rounded-xl border border-border/80 bg-card/50">
+              {documents.map((doc, idx) => (
                 <li
                   key={doc.id}
-                  className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+                  className={cn(
+                    "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5",
+                    idx < documents.length - 1 && "border-b border-border/60",
+                    doc.status === "COMPLETED" && "bg-emerald-500/10 backdrop-blur-sm border-l-2 border-l-emerald-500/30",
+                    doc.status === "PROCESSING" && "bg-muted/40 border-l-2 border-l-muted-foreground/20",
+                    doc.status === "FAILED" && "bg-red-500/10 border-l-2 border-l-red-500/30",
+                    doc.status === "QUEUED" && "bg-transparent border-2 border-dashed border-muted-foreground/30 my-1 rounded-lg",
+                  )}
                 >
                   <div className="flex min-w-0 items-start gap-3">
                     <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
@@ -580,6 +602,25 @@ export default function Dashboard() {
                 </li>
               ))}
             </ul>
+            {nextCursor && (
+              <div className="flex justify-center pt-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="gap-1.5 text-muted-foreground hover:text-foreground"
+                >
+                  {loadingMore ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <ChevronDown className="size-3.5" />
+                  )}
+                  Load more
+                </Button>
+              </div>
+            )}
+            </>
           )}
         </section>
       </main>
