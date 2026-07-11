@@ -128,12 +128,8 @@ export async function xPendingRange(
 ): Promise<Array<{ id: string; consumer: string; deliveryCount: number }>> {
     console.log(`[redis-stream:xPendingRange] Pending detail — group="${consumerGroup}", start="${start}", end="${end}", count=${count}`);
     try {
-        const result = await redisClient.xPending(STREAM_NAME, consumerGroup, {
-            start,
-            end,
-            COUNT: count,
-        });
-        console.log(`[redis-stream:xPendingRange] Got ${result.length} pending item(s)`);
+        const result = await redisClient.xPendingRange(STREAM_NAME, consumerGroup, start, end, count)   ;
+         console.log(`[redis-stream:xPendingRange] Got ${result.length} pending item(s)`);
         return result.map(item => ({
             id: item.id,
             consumer: item.consumer,
