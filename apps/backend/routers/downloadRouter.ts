@@ -1,12 +1,15 @@
 import { Router } from "express"
 import { prismaClient } from "@repo/prisma/client";
-import { GetObjectCommand } from "@aws-sdk/client-s3"
+import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3"
 import { s3 } from "@repo/minio/client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { removeDocumentFromStream } from "@repo/redis-stream/client";
+import { qdrantClient } from "@repo/qdrant/client";
 import dotenv from "dotenv"
 dotenv.config();
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME
+const COLLECTION = process.env.COLLECTION as string
 
 const downloadRouter = Router();
 
@@ -91,6 +94,79 @@ downloadRouter.get("/list", async (req, res) => {
     } catch (e) {
         console.error(`[download:list] Failed to list documents:`, e);
         res.status(500).json({ message: "Failed to list documents" });
+    }
+});
+
+/**
+ * Delete a document: remove from Redis stream (even if queued/processing),
+ * MinIO object, Qdrant points, and DB row.
+ */
+downloadRouter.delete("/:id", async (req, res) => {
+    const userId = req.userId;
+    const id = req.params.id;
+    console.log(`[download:delete] Entry — userId=${userId}, documentId=${id}`);
+
+    if (!userId) {
+        res.status(401).json({ message: "Unauthorized" });
+        return;
+    }
+
+    try {
+        const doc = await prismaClient.document.findFirst({
+            where: { id, userId },
+        });
+
+        if (!doc) {
+            console.warn(`[download:delete] Document not found: ${id}`);
+            res.status(404).json({ message: "Document not found" });
+            return;
+        }
+
+        // 1. Remove from Redis stream so workers stop / never start
+        try {
+            await removeDocumentFromStream(doc.id);
+            console.log(`[download:delete] Stream cleanup done for ${doc.id}`);
+        } catch (e) {
+            console.error(`[download:delete] Stream cleanup failed:`, e);
+        }
+
+        // 2. Delete MinIO object
+        try {
+            await s3.send(
+                new DeleteObjectCommand({
+                    Bucket: AWS_BUCKET_NAME,
+                    Key: doc.ObjectKey,
+                })
+            );
+            console.log(`[download:delete] MinIO object deleted: ${doc.ObjectKey}`);
+        } catch (e) {
+            console.error(`[download:delete] MinIO delete failed:`, e);
+        }
+
+        // 3. Delete Qdrant points for this document UUID
+        if (COLLECTION) {
+            try {
+                await qdrantClient.delete(COLLECTION, {
+                    wait: true,
+                    filter: { must: [ { key: "documentId", match: { value: doc.id } } ] },
+                });
+                console.log(`[download:delete] Qdrant points deleted for documentId=${doc.id}`);
+            } catch (e) {
+                console.error(`[download:delete] Qdrant delete failed:`, e);
+            }
+        }
+
+        // 4. Delete DB row (source of truth for "gone")
+        await prismaClient.document.delete({ where: { id: doc.id } });
+        console.log(`[download:delete] Document deleted from DB: ${doc.id}`);
+
+        res.status(200).json({ message: "Document deleted" });
+    } catch (e) {
+        console.error(`[download:delete] Error:`, e);
+        res.status(500).json({
+            message: "Failed to delete document",
+            error: e instanceof Error ? e.message : e,
+        });
     }
 });
 

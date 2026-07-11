@@ -140,3 +140,93 @@ export async function xPendingRange(
         return [];
     }
 }
+
+/**
+ * Delete a stream entry by message id.
+ */
+export async function xDel(messageId: string): Promise<number | null> {
+    console.log(`[redis-stream:xDel] Deleting messageId="${messageId}" from stream "${STREAM_NAME}"`);
+    try {
+        const res = await redisClient.xDel(STREAM_NAME, messageId);
+        console.log(`[redis-stream:xDel] Deleted count=${res}`);
+        return res;
+    } catch (e) {
+        console.error(`[redis-stream:xDel] Failed:`, e);
+        return null;
+    }
+}
+
+/**
+ * Ack + delete a stream message so it cannot be processed or reclaimed.
+ */
+export async function removeStreamMessage(
+    consumerGroup: string,
+    messageId: string
+): Promise<void> {
+    console.log(`[redis-stream:removeStreamMessage] Removing messageId="${messageId}" group="${consumerGroup}"`);
+    try {
+        await xAck(consumerGroup, messageId);
+    } catch (e) {
+        console.warn(`[redis-stream:removeStreamMessage] Ack failed (may not be pending):`, e);
+    }
+    await xDel(messageId);
+}
+
+/**
+ * Remove all stream entries for a document (by known message id and/or scan).
+ * Use when deleting a document that may still be queued or in-flight.
+ */
+export async function removeDocumentFromStream(
+    documentId: string,
+    streamMessageId?: string | null
+): Promise<number> {
+    const group = GROUP_NAME;
+    console.log(
+        `[redis-stream:removeDocumentFromStream] documentId="${documentId}", streamMessageId="${streamMessageId ?? "none"}"`
+    );
+    let removed = 0;
+    const seen = new Set<string>();
+
+    const removeOne = async (id: string) => {
+        if (seen.has(id)) return;
+        seen.add(id);
+        await removeStreamMessage(group, id);
+        removed += 1;
+    };
+
+    if (streamMessageId) {
+        await removeOne(streamMessageId);
+    }
+
+    // Fallback / full scan: find any remaining entries with this documentId
+    try {
+        let start = "-";
+        const COUNT = 100;
+        // redis node client: xRange(key, start, end, { COUNT })
+        // Iterate until no more messages
+        for (let i = 0; i < 50; i++) {
+            const messages = await redisClient.xRange(STREAM_NAME, start, "+", {
+                COUNT,
+            });
+            if (!messages.length) break;
+
+            for (const msg of messages) {
+                const msgDocId = msg.message?.documentId;
+                if (msgDocId === documentId) {
+                    await removeOne(msg.id);
+                }
+            }
+
+            const lastId = messages[messages.length - 1]!.id;
+            // Advance past last id: use exclusive-ish next by reusing last and skipping seen
+            if (messages.length < COUNT) break;
+            // Redis XRANGE is inclusive; bump by reading after lastId via "(" prefix if supported
+            start = `(${lastId}`;
+        }
+    } catch (e) {
+        console.error(`[redis-stream:removeDocumentFromStream] Scan failed:`, e);
+    }
+
+    console.log(`[redis-stream:removeDocumentFromStream] Removed ${removed} message(s) for documentId="${documentId}"`);
+    return removed;
+}

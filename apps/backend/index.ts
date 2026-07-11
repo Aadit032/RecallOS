@@ -2,6 +2,7 @@ import cors from "cors";
 import uploadRouter from "./routers/uploadRouter.ts"
 import authRouter from "./routers/authRouter.ts"
 import chatRouter from "./routers/chatRouter.ts";
+import projectRouter from "./routers/projectRouter.ts";
 import express from "express"
 import dotenv from "dotenv"
 import middleware from "./middleware.ts";
@@ -26,6 +27,9 @@ console.log(`[server] Registered: /api/v1/download (with middleware)`);
 
 app.use("/api/v1/chat", middleware, chatRouter);
 console.log(`[server] Registered: /api/v1/chat (with middleware)`);
+
+app.use("/api/v1/projects", middleware, projectRouter);
+console.log(`[server] Registered: /api/v1/projects (with middleware)`);
 
 app.listen(PORT, () => {
   console.log(`[server] RecallOS backend listening on port ${PORT}`);

@@ -110,7 +110,10 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
     return chunks;
 }
 
-function buildSystemPrompt(contextChunks: { text: string; id: string }[]): string {
+function buildSystemPrompt(
+    contextChunks: { text: string; id: string }[],
+    projectSystemPrompt?: string | null
+): string {
     console.log(`[buildSystemPrompt] Building prompt with ${contextChunks.length} context chunks`);
     const context = contextChunks
         .map((c, i) => `[${i + 1}] (id: ${c.id})\n${c.text}`)
@@ -119,11 +122,16 @@ function buildSystemPrompt(contextChunks: { text: string; id: string }[]): strin
     const totalChars = context.length;
     console.log(`[buildSystemPrompt] Context length: ${totalChars} characters`);
 
+    const projectBlock =
+        projectSystemPrompt && projectSystemPrompt.trim().length > 0
+            ? `\n\nAdditional project instructions:\n${projectSystemPrompt.trim()}\n`
+            : "";
+
     return `You are RecallOS, an assistant that answers questions using the user's organizational knowledge base.
         Use ONLY the context chunks below to answer. If the context is insufficient, say so clearly.
         Cite chunk numbers like [1], [2] when you rely on them.
         Be concise and accurate.
-
+        ${projectBlock}
         Context chunks:
         ${context || "(No relevant chunks found.)"}`;
 }
@@ -178,8 +186,10 @@ chatRouter.get("/", async (req, res) => {
                 id: true,
                 title: true,
                 pinned: true,
+                projectId: true,
                 updatedAt: true,
                 createdAt: true,
+                project: { select: { id: true, name: true } },
                 _count: { select: { messages: true } },
             },
         });
@@ -188,8 +198,9 @@ chatRouter.get("/", async (req, res) => {
         const page = hasMore ? rows.slice(0, limit) : rows;
         const nextCursor = hasMore ? page[page.length - 1]!.id : null;
 
-        const chats = page.map(({ _count, ...chat }) => ({
+        const chats = page.map(({ _count, project, ...chat }) => ({
             ...chat,
+            projectName: project?.name ?? null,
             messageCount: _count.messages,
         }));
 
@@ -217,6 +228,7 @@ chatRouter.get("/:id", async (req, res) => {
                     orderBy: { createdAt: "asc" },
                     select: { id: true, role: true, content: true, createdAt: true },
                 },
+                project: { select: { id: true, name: true } },
             },
         });
 
@@ -262,10 +274,26 @@ chatRouter.patch("/:id", async (req, res) => {
             return;
         }
 
+        const { projectId, ...rest } = parsed.data;
+
+        if (projectId !== undefined && projectId !== null) {
+            const project = await prismaClient.project.findFirst({
+                where: { id: projectId, userId },
+            });
+            if (!project) {
+                res.status(404).json({ message: "Project not found" });
+                return;
+            }
+        }
+
         console.log(`[PATCH /chat/:id] Existing title: "${existing.title}", updating with:`, parsed.data);
         const chat = await prismaClient.chat.update({
             where: { id },
-            data: parsed.data,
+            data: {
+                ...rest,
+                ...(projectId !== undefined ? { projectId } : {}),
+            },
+            include: { project: { select: { id: true, name: true } } },
         });
 
         console.log(`[PATCH /chat/:id] Updated chat: "${chat.title}"`);
@@ -338,7 +366,12 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] Step 1 — Resolving chat session`);
         let chat =
             chatId != null
-                ? await prismaClient.chat.findFirst({ where: { id: chatId, userId } })
+                ? await prismaClient.chat.findFirst({
+                      where: { id: chatId, userId },
+                      include: {
+                          project: { select: { id: true, name: true, systemPrompt: true } },
+                      },
+                  })
                 : null;
 
         if (chatId && !chat) {
@@ -355,10 +388,13 @@ chatRouter.post("/message", async (req, res) => {
                     userId,
                     title: titleFromMessage(message),
                 },
+                include: { project: { select: { id: true, name: true, systemPrompt: true } } },
             });
         } else {
-            console.log(`[POST /message] Using existing chat: id=${chat.id}, title="${chat.title}", pin=${chat.pinned}`);
+            console.log(`[POST /message] Using existing chat: id=${chat.id}, title="${chat.title}", pin=${chat.pinned}, projectId=${chat.projectId ?? "none"}`);
         }
+
+        const projectSystemPrompt = chat.project?.systemPrompt ?? null;
 
         // 2. Persist user message
         console.log(`[POST /message] Step 2 — Persisting user message in chat ${chat.id}`);
@@ -395,13 +431,13 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
-            { role: "system" as const, content: buildSystemPrompt(topChunks) },
+            { role: "system" as const, content: buildSystemPrompt(topChunks, projectSystemPrompt) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
                 content: m.content,
             })),
         ];
-        console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history)`);
+        console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}`);
 
         // 6. LLM call via OpenRouter
         console.log(`[POST /message] Step 6 — Calling OpenRouter model=${CHAT_MODEL}`);

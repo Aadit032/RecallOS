@@ -16,6 +16,7 @@ model User {
 
   documents Document[]
   chats     Chat[]
+  projects  Project[]
 }
 
 enum DocumentStatus {
@@ -26,33 +27,52 @@ enum DocumentStatus {
 }
 
 model Document {
-  id        String   @id @default(uuid())
-  title     String
-  content   String?
-  ObjectKey String @unique
-  status    DocumentStatus @default(QUEUED)
+  id              String         @id @default(uuid())
+  title           String
+  content         String?
+  ObjectKey       String         @unique
+  status          DocumentStatus @default(QUEUED)
+  streamMessageId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
-  userId    String
-  user User @relation(fields: [userId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Project {
+  id           String   @id @default(uuid())
+  name         String
+  systemPrompt String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chats  Chat[]
 
   @@index([userId])
 }
 
 model Chat {
-  id        String    @id @default(uuid())
-  title     String    @default("New chat")
-  pinned    Boolean   @default(false)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  title     String   @default("New chat")
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
 
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
   @@index([userId])
+  @@index([projectId])
 }
 
 model Message {
@@ -61,8 +81,8 @@ model Message {
   content   String
   createdAt DateTime @default(now())
 
-  chatId    String
-  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId String
+  chat   Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@index([chatId])
 }

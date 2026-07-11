@@ -18,4 +18,15 @@ export const messageSchema = z.object({
 export const bodySchema = z.object({
     title: z.string().min(1).max(200).optional(),
     pinned: z.boolean().optional(),
+    projectId: z.string().uuid().nullable().optional(),
+});
+
+export const createProjectSchema = z.object({
+    name: z.string().min(1).max(100),
+    systemPrompt: z.string().max(8000).optional().nullable(),
+});
+
+export const updateProjectSchema = z.object({
+    name: z.string().min(1).max(100).optional(),
+    systemPrompt: z.string().max(8000).optional().nullable(),
 });

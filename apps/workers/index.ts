@@ -46,13 +46,17 @@ async function claimStaleJobs() {
 
         if (deliveryCount > MAX_RETRIES) {
             console.log(`[workers:claimStaleJobs] deliveryCount ${deliveryCount} > MAX_RETRIES ${MAX_RETRIES} — FAILING document ${msg.message.documentId}`);
-            await prismaClient.document.update({
-                where: { id: msg.message.documentId },
-                data: { status: "FAILED" },
-            });
-        
+            try {
+                await prismaClient.document.update({
+                    where: { id: msg.message.documentId },
+                    data: { status: "FAILED" },
+                });
+            } catch (e) {
+                console.log(`[workers:claimStaleJobs] Could not mark FAILED (doc may be deleted):`, e);
+            }
+
             await xAck(CONSUMER_GROUP, msg.id);
-        
+
         } else {
             console.log(`[workers:claimStaleJobs] deliveryCount ${deliveryCount} <= ${MAX_RETRIES} — processing document ${msg.message.documentId}`);
         
@@ -161,7 +165,15 @@ async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<C
     }
 }
 
-async function upsertChunks(chunks: Chunk[]){
+async function documentStillExists(documentId: string): Promise<boolean> {
+    const row = await prismaClient.document.findUnique({
+        where: { id: documentId },
+        select: { id: true },
+    });
+    return Boolean(row);
+}
+
+async function upsertChunks(chunks: Chunk[], documentId: string) {
     const texts = chunks.map(chunk => chunk.text)
 
     try{
@@ -170,7 +182,7 @@ async function upsertChunks(chunks: Chunk[]){
 
         console.log("sparseVectors", sparseVectors);
         console.log("embeddings", embeddings);
-    
+
         const points = chunks.map((chunk, i) => ({
             id: uuidv4(),
             vector: {
@@ -179,12 +191,13 @@ async function upsertChunks(chunks: Chunk[]){
             },
             payload: {
                 text: chunk.text,
-                documentId: chunk.id,
+                documentId,
+                chunkIndex: chunk.id,
             }
         }));
 
         console.log("points", points);
-    
+
         await qdrantClient.upsert(COLLECTION, { wait: true, points });
         console.log("points have been upserted to qdrant!!")
     }catch(e){
@@ -195,23 +208,39 @@ async function upsertChunks(chunks: Chunk[]){
 // parse => chunk => enrich context => get embeddings => store in vector db + splade index
 async function processDocuments(streamMessage: streamMessage, pricingTier: PricingTier){
     console.log("streamMessage: ", streamMessage);
+    const documentId = streamMessage.message.documentId;
+
     try{
+        // Skip if document was deleted before we started
+        const existing = await prismaClient.document.findUnique({
+            where: { id: documentId },
+            select: { id: true, ObjectKey: true },
+        });
+        if (!existing) {
+            console.log(`[processDocuments] Document ${documentId} no longer exists — skipping`);
+            return;
+        }
+
         const document = await prismaClient.document.update({
-            where: { id: streamMessage.message.documentId },
+            where: { id: documentId },
             data: { status: "PROCESSING" },
             select: { ObjectKey: true }
         });
         console.log("Document status updated to PROCESSING in db.")
-        
+
         // Parse the document into markdown
         let markdown: string | null = null;
         let tier: Tier;
 
-        if(pricingTier == "basic") tier = "cost_effective"; 
+        if(pricingTier == "basic") tier = "cost_effective";
         else if(pricingTier == "max") tier = "agentic";
         else tier = "agentic_plus";
 
         for(let i = 0; i < MAX_RETRIES; i++){
+            if (!(await documentStillExists(documentId))) {
+                console.log(`[processDocuments] Document ${documentId} deleted during parse — aborting`);
+                return;
+            }
             try{
                 const job = await createParseJob(document.ObjectKey, tier, "dev");
                 if(!job) {
@@ -232,11 +261,18 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
             }
         }
         if(!markdown){
-            await prismaClient.document.update({
-                where: { id: streamMessage.message.documentId },
-                data: { status: "FAILED" },
-            });
+            if (await documentStillExists(documentId)) {
+                await prismaClient.document.update({
+                    where: { id: documentId },
+                    data: { status: "FAILED" },
+                });
+            }
             console.log("Max attempts reached.");
+            return;
+        }
+
+        if (!(await documentStillExists(documentId))) {
+            console.log(`[processDocuments] Document ${documentId} deleted after parse — aborting`);
             return;
         }
 
@@ -251,11 +287,21 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
             chunks = await contextualRetrieval(markdown, chunks);
         }
 
+        if (!(await documentStillExists(documentId))) {
+            console.log(`[processDocuments] Document ${documentId} deleted before upsert — aborting`);
+            return;
+        }
+
         // get embeddings + store in qdrant + splade idx
-        await upsertChunks(chunks);
+        await upsertChunks(chunks, documentId);
+
+        if (!(await documentStillExists(documentId))) {
+            console.log(`[processDocuments] Document ${documentId} deleted after upsert — not marking COMPLETED`);
+            return;
+        }
 
         await prismaClient.document.update({
-            where: { id: streamMessage.message.documentId },
+            where: { id: documentId },
             data: { status: "COMPLETED" }
         });
 

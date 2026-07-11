@@ -9,6 +9,7 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
+  Trash2,
   Upload,
   X,
 } from "lucide-react"
@@ -98,6 +99,7 @@ export default function Dashboard() {
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState("")
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const fetchDocuments = useCallback(async () => {
     console.log(`[dashboard:fetchDocuments] Fetching document list`);
@@ -225,6 +227,37 @@ export default function Dashboard() {
       }
     )
     window.open(data.presignedUrl, "_blank")
+  }
+
+  const handleDeleteDocument = async (doc: DocumentItem) => {
+    const confirmed = window.confirm(
+      `Delete “${doc.title}”? This removes it from the queue (even if processing), storage, and search index.`
+    )
+    if (!confirmed) return
+
+    console.log(`[dashboard:handleDeleteDocument] Deleting documentId=${doc.id}`);
+    setDeletingId(doc.id)
+    try {
+      const token = localStorage.getItem("token")
+      await axios.delete(`${API_BASE_DOWNLOAD}/${doc.id}`, {
+        headers: { Authorization: "Bearer " + token },
+      })
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
+      if (documentId === doc.id) {
+        setDocumentId(null)
+        setUploadKey(null)
+      }
+      console.log(`[dashboard:handleDeleteDocument] Deleted documentId=${doc.id}`);
+    } catch (e) {
+      console.error(`[dashboard:handleDeleteDocument] Error:`, e)
+      setDocsError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to delete document"
+      )
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const isPdf =
@@ -528,6 +561,20 @@ export default function Dashboard() {
                     >
                       <Download className="size-3.5" />
                       Download
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      disabled={deletingId === doc.id}
+                      onClick={() => void handleDeleteDocument(doc)}
+                    >
+                      {deletingId === doc.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                      Delete
                     </Button>
                   </div>
                 </li>

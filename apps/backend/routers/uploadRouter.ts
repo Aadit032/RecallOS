@@ -110,6 +110,15 @@ uploadRouter.post("/confirm", async (req, res) => {
                 return;
             }
             console.log(`[upload:confirm] Pushed to stream: messageId=${messageId}`);
+            try {
+                document = await prismaClient.document.update({
+                    where: { id: document.id },
+                    data: { streamMessageId: messageId }
+                });
+                console.log(`[upload:confirm] Stored streamMessageId on document ${document.id}`);
+            } catch (e) {
+                console.error(`[upload:confirm] Failed to store streamMessageId:`, e);
+            }
         }
 
         console.log(`[upload:confirm] Confirm successful — documentId=${document.id}`);

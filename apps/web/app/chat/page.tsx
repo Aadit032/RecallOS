@@ -4,22 +4,40 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import axios from "axios"
 import {
+  Check,
   FileText,
+  Folder,
+  FolderInput,
+  FolderPlus,
   Loader2,
   Mic,
   MicOff,
+  MoreHorizontal,
   Paperclip,
   Pin,
   PinOff,
   Plus,
   Search,
   Send,
+  Settings2,
   SquarePen,
+  Trash2,
 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -43,6 +61,7 @@ import {
 } from "@/components/ui/tooltip"
 
 const API_BASE_CHAT = "http://localhost:3000/api/v1/chat"
+const API_BASE_PROJECTS = "http://localhost:3000/api/v1/projects"
 const PAGE_SIZE = 20
 
 type Role = "user" | "assistant"
@@ -54,10 +73,19 @@ type Message = {
   createdAt: string
 }
 
+type Project = {
+  id: string
+  name: string
+  systemPrompt: string | null
+  chatCount?: number
+}
+
 type ChatSession = {
   id: string
   title: string
   pinned: boolean
+  projectId: string | null
+  projectName: string | null
   updatedAt: string
   messageCount: number
   messages: Message[]
@@ -68,6 +96,8 @@ type ChatListItem = {
   id: string
   title: string
   pinned: boolean
+  projectId?: string | null
+  projectName?: string | null
   updatedAt: string
   messageCount: number
 }
@@ -92,6 +122,8 @@ function emptyDraft(): ChatSession {
     id: DRAFT_ID,
     title: "New chat",
     pinned: false,
+    projectId: null,
+    projectName: null,
     updatedAt: new Date().toISOString(),
     messageCount: 0,
     messages: [],
@@ -104,6 +136,8 @@ function mapListItem(c: ChatListItem): ChatSession {
     id: c.id,
     title: c.title,
     pinned: c.pinned,
+    projectId: c.projectId ?? null,
+    projectName: c.projectName ?? null,
     updatedAt:
       typeof c.updatedAt === "string"
         ? c.updatedAt
@@ -128,6 +162,13 @@ export default function ChatPage() {
   const [error, setError] = useState("")
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [newProjectName, setNewProjectName] = useState("")
+  const [creatingProject, setCreatingProject] = useState(false)
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [editProjectName, setEditProjectName] = useState("")
+  const [editProjectPrompt, setEditProjectPrompt] = useState("")
+  const [savingProject, setSavingProject] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -150,6 +191,24 @@ export default function ChatPage() {
       chats: ChatListItem[]
       nextCursor: string | null
       hasMore: boolean
+    }
+  }, [])
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API_BASE_PROJECTS}/`, {
+        headers: authHeaders(),
+      })
+      setProjects(
+        (data.projects ?? []).map((p: Project) => ({
+          id: p.id,
+          name: p.name,
+          systemPrompt: p.systemPrompt ?? null,
+          chatCount: p.chatCount,
+        }))
+      )
+    } catch (e) {
+      console.error(`[chat:loadProjects] Error:`, e)
     }
   }, [])
 
@@ -249,8 +308,10 @@ export default function ChatPage() {
         id: string
         title: string
         pinned: boolean
+        projectId?: string | null
         updatedAt: string
         messages: Message[]
+        project?: { id: string; name: string } | null
       }
 
       const messages: Message[] = (chat.messages ?? []).map((m) => ({
@@ -272,6 +333,8 @@ export default function ChatPage() {
                 ...s,
                 title: chat.title,
                 pinned: chat.pinned,
+                projectId: chat.projectId ?? chat.project?.id ?? null,
+                projectName: chat.project?.name ?? s.projectName,
                 updatedAt:
                   typeof chat.updatedAt === "string"
                     ? chat.updatedAt
@@ -298,7 +361,8 @@ export default function ChatPage() {
 
   useEffect(() => {
     void loadChats()
-  }, [loadChats])
+    void loadProjects()
+  }, [loadChats, loadProjects])
 
   // Fetch messages when selecting a chat that hasn't been loaded yet
   useEffect(() => {
@@ -386,6 +450,184 @@ export default function ChatPage() {
     }
   }
 
+  const deleteChat = async (id: string) => {
+    if (id === DRAFT_ID) return
+    const session = sessions.find((s) => s.id === id)
+    if (!session) return
+
+    const confirmed = window.confirm(`Delete “${session.title}”? This cannot be undone.`)
+    if (!confirmed) return
+
+    const snapshot = sessions
+    setSessions((prev) => prev.filter((s) => s.id !== id))
+    if (activeId === id) {
+      setActiveId(DRAFT_ID)
+    }
+
+    try {
+      await axios.delete(`${API_BASE_CHAT}/${id}`, { headers: authHeaders() })
+      console.log(`[chat:deleteChat] Deleted chatId=${id}`)
+    } catch (e) {
+      console.error(`[chat:deleteChat] Error:`, e)
+      setSessions(snapshot)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to delete chat"
+      )
+    }
+  }
+
+  const moveToProject = async (chatId: string, projectId: string | null) => {
+    if (chatId === DRAFT_ID) return
+    const projectName =
+      projectId == null
+        ? null
+        : projects.find((p) => p.id === projectId)?.name ?? null
+
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === chatId
+          ? { ...s, projectId, projectName }
+          : s
+      )
+    )
+
+    try {
+      await axios.patch(
+        `${API_BASE_CHAT}/${chatId}`,
+        { projectId },
+        { headers: authHeaders() }
+      )
+      console.log(`[chat:moveToProject] chatId=${chatId} → projectId=${projectId ?? "none"}`)
+      void loadProjects()
+    } catch (e) {
+      console.error(`[chat:moveToProject] Error:`, e)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to move chat"
+      )
+      void loadChats()
+    }
+  }
+
+  const createProject = async () => {
+    const name = newProjectName.trim()
+    if (!name || creatingProject) return
+    setCreatingProject(true)
+    try {
+      const { data } = await axios.post(
+        `${API_BASE_PROJECTS}/`,
+        { name },
+        { headers: authHeaders() }
+      )
+      const project = data.project as Project
+      setProjects((prev) => [
+        {
+          id: project.id,
+          name: project.name,
+          systemPrompt: project.systemPrompt ?? null,
+          chatCount: 0,
+        },
+        ...prev,
+      ])
+      setNewProjectName("")
+    } catch (e) {
+      console.error(`[chat:createProject] Error:`, e)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to create project"
+      )
+    } finally {
+      setCreatingProject(false)
+    }
+  }
+
+  const openEditProject = (project: Project) => {
+    setEditingProject(project)
+    setEditProjectName(project.name)
+    setEditProjectPrompt(project.systemPrompt ?? "")
+  }
+
+  const saveProject = async () => {
+    if (!editingProject || savingProject) return
+    const name = editProjectName.trim()
+    if (!name) return
+    setSavingProject(true)
+    try {
+      const { data } = await axios.patch(
+        `${API_BASE_PROJECTS}/${editingProject.id}`,
+        {
+          name,
+          systemPrompt: editProjectPrompt.trim() || null,
+        },
+        { headers: authHeaders() }
+      )
+      const updated = data.project as Project
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === updated.id
+            ? {
+                ...p,
+                name: updated.name,
+                systemPrompt: updated.systemPrompt ?? null,
+              }
+            : p
+        )
+      )
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.projectId === updated.id
+            ? { ...s, projectName: updated.name }
+            : s
+        )
+      )
+      setEditingProject(null)
+    } catch (e) {
+      console.error(`[chat:saveProject] Error:`, e)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to update project"
+      )
+    } finally {
+      setSavingProject(false)
+    }
+  }
+
+  const deleteProject = async (projectId: string) => {
+    const project = projects.find((p) => p.id === projectId)
+    if (!project) return
+    const confirmed = window.confirm(
+      `Delete project “${project.name}”? Chats will be unfiled, not deleted.`
+    )
+    if (!confirmed) return
+
+    try {
+      await axios.delete(`${API_BASE_PROJECTS}/${projectId}`, {
+        headers: authHeaders(),
+      })
+      setProjects((prev) => prev.filter((p) => p.id !== projectId))
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.projectId === projectId
+            ? { ...s, projectId: null, projectName: null }
+            : s
+        )
+      )
+      if (editingProject?.id === projectId) setEditingProject(null)
+    } catch (e) {
+      console.error(`[chat:deleteProject] Error:`, e)
+      setError(
+        axios.isAxiosError(e)
+          ? (e.response?.data?.message as string) || e.message
+          : "Failed to delete project"
+      )
+    }
+  }
+
   const sendMessage = async () => {
     const text = draft.trim()
     if (!text || !active || sending) {
@@ -464,6 +706,8 @@ export default function ChatPage() {
           id: chatId,
           title: data.title ?? prior?.title ?? "Chat",
           pinned: prior?.pinned ?? false,
+          projectId: prior?.projectId ?? null,
+          projectName: prior?.projectName ?? null,
           updatedAt: new Date().toISOString(),
           messages,
           messageCount: messages.length,
@@ -471,7 +715,11 @@ export default function ChatPage() {
         }
 
         const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
-        return needsDraft ? [emptyDraft(), updated, ...rest] : [updated, ...rest]
+        // Keep draft first, then re-sort: pinned chats float to top
+        const withUpdated = needsDraft
+          ? [emptyDraft(), updated, ...rest]
+          : [updated, ...rest]
+        return withUpdated
       })
       setActiveId(chatId)
     } catch (e) {
@@ -535,6 +783,123 @@ export default function ChatPage() {
 
         <SidebarContent>
           <SidebarGroup>
+            <SidebarGroupLabel>Projects</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <div className="mb-2 flex gap-1.5 px-1">
+                <input
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      void createProject()
+                    }
+                  }}
+                  placeholder="New project…"
+                  className="h-8 min-w-0 flex-1 rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 shrink-0 px-2"
+                  disabled={!newProjectName.trim() || creatingProject}
+                  onClick={() => void createProject()}
+                  title="Create project"
+                >
+                  {creatingProject ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <FolderPlus className="size-3.5" />
+                  )}
+                </Button>
+              </div>
+              {projects.length === 0 ? (
+                <p className="px-2 py-2 text-xs text-muted-foreground">
+                  No projects yet. Create one to organize chats and set a project system prompt.
+                </p>
+              ) : (
+                <SidebarMenu>
+                  {projects.map((project) => (
+                    <SidebarMenuItem key={project.id}>
+                      <SidebarMenuButton
+                        className="h-auto items-center gap-2 py-1.5"
+                        onClick={() => openEditProject(project)}
+                      >
+                        <Folder className="size-3.5 shrink-0 opacity-70" />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                          {project.name}
+                        </span>
+                        {typeof project.chatCount === "number" && (
+                          <span className="text-[10px] opacity-60">
+                            {project.chatCount}
+                          </span>
+                        )}
+                      </SidebarMenuButton>
+                      <SidebarMenuAction
+                        showOnHover
+                        title="Edit project"
+                        onClick={() => openEditProject(project)}
+                      >
+                        <Settings2 className="size-3.5" />
+                      </SidebarMenuAction>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              )}
+              {editingProject && (
+                <div className="mt-2 space-y-2 rounded-md border border-sidebar-border bg-background/80 p-2">
+                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    Edit project
+                  </p>
+                  <input
+                    value={editProjectName}
+                    onChange={(e) => setEditProjectName(e.target.value)}
+                    className="h-8 w-full rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    placeholder="Project name"
+                  />
+                  <textarea
+                    value={editProjectPrompt}
+                    onChange={(e) => setEditProjectPrompt(e.target.value)}
+                    rows={3}
+                    placeholder="Extra system prompt for chats in this project…"
+                    className="w-full resize-y rounded-md border border-sidebar-border bg-background px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      disabled={savingProject || !editProjectName.trim()}
+                      onClick={() => void saveProject()}
+                    >
+                      {savingProject ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        "Save"
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setEditingProject(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                      onClick={() => void deleteProject(editingProject.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup>
             <SidebarGroupLabel>Chats</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
@@ -555,7 +920,7 @@ export default function ChatPage() {
                       <SidebarMenuButton
                         isActive={selected}
                         onClick={() => selectChat(session.id)}
-                        className="h-auto flex-col items-start gap-0.5 py-2"
+                        className="h-auto flex-col items-start gap-0.5 py-2 pr-8"
                       >
                         <span className="flex w-full items-center gap-1.5">
                           {session.pinned && (
@@ -568,20 +933,109 @@ export default function ChatPage() {
                         <span className="text-xs opacity-70">
                           {formatChatTime(session.updatedAt)} ·{" "}
                           {session.messageCount} messages
+                          {session.projectName
+                            ? ` · ${session.projectName}`
+                            : ""}
                         </span>
                       </SidebarMenuButton>
                       {session.id !== DRAFT_ID && (
-                        <SidebarMenuAction
-                          showOnHover
-                          onClick={() => void togglePin(session.id)}
-                          title={session.pinned ? "Unpin" : "Pin"}
-                        >
-                          {session.pinned ? (
-                            <PinOff className="size-3.5" />
-                          ) : (
-                            <Pin className="size-3.5" />
-                          )}
-                        </SidebarMenuAction>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <SidebarMenuAction
+                              showOnHover
+                              title="More"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="size-3.5" />
+                            </SidebarMenuAction>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            side="right"
+                            align="start"
+                            className="w-48"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <DropdownMenuItem
+                              onClick={() => void togglePin(session.id)}
+                            >
+                              {session.pinned ? (
+                                <>
+                                  <PinOff className="size-3.5" />
+                                  Unpin
+                                </>
+                              ) : (
+                                <>
+                                  <Pin className="size-3.5" />
+                                  Pin
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger>
+                                <FolderInput className="size-3.5" />
+                                Move to project
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-48">
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    void moveToProject(session.id, null)
+                                  }
+                                >
+                                  {!session.projectId && (
+                                    <Check className="size-3.5" />
+                                  )}
+                                  <span
+                                    className={
+                                      session.projectId ? "pl-5" : undefined
+                                    }
+                                  >
+                                    No project
+                                  </span>
+                                </DropdownMenuItem>
+                                {projects.length > 0 && (
+                                  <DropdownMenuSeparator />
+                                )}
+                                {projects.map((project) => (
+                                  <DropdownMenuItem
+                                    key={project.id}
+                                    onClick={() =>
+                                      void moveToProject(
+                                        session.id,
+                                        project.id
+                                      )
+                                    }
+                                  >
+                                    {session.projectId === project.id && (
+                                      <Check className="size-3.5" />
+                                    )}
+                                    <span
+                                      className={
+                                        session.projectId === project.id
+                                          ? undefined
+                                          : "pl-5"
+                                      }
+                                    >
+                                      {project.name}
+                                    </span>
+                                  </DropdownMenuItem>
+                                ))}
+                                {projects.length === 0 && (
+                                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                    Create a project first
+                                  </DropdownMenuLabel>
+                                )}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => void deleteChat(session.id)}
+                            >
+                              <Trash2 className="size-3.5" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </SidebarMenuItem>
                   )
@@ -619,6 +1073,24 @@ export default function ChatPage() {
               <Pin className="size-3" />
               Pinned
             </Badge>
+          )}
+          {active?.projectName && (
+            <Badge variant="outline" className="hidden gap-1 sm:inline-flex">
+              <Folder className="size-3" />
+              {active.projectName}
+            </Badge>
+          )}
+          {active && active.id !== DRAFT_ID && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              title="Delete chat"
+              onClick={() => void deleteChat(active.id)}
+            >
+              <Trash2 className="size-4" />
+              <span className="hidden sm:inline">Delete</span>
+            </Button>
           )}
           <ThemeToggle />
           <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
