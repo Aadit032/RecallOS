@@ -212,6 +212,21 @@
   animation: lane-flow 2.4s ease-in-out infinite;
 }
 
+@keyframes sidebar-section-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-sidebar-section {
+  animation: sidebar-section-in 0.15s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-recall-pulse,
   .animate-lane-flow {
