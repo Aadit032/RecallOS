@@ -3,6 +3,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import axios from "axios"
+import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
 import {
   Check,
   ChevronDown,
@@ -15,6 +19,7 @@ import {
   Mic,
   MicOff,
   MoreHorizontal,
+  PanelLeft,
   Paperclip,
   Pin,
   PinOff,
@@ -23,14 +28,22 @@ import {
   Send,
   Settings2,
   SquarePen,
-   Trash2,
-   User,
+  Trash2,
+  User,
 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,12 +55,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import {
   Sidebar,
-   SidebarContent,
-   SidebarFooter,
-   SidebarGroup,
-  SidebarGroupAction,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -65,6 +78,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+
+import "katex/dist/katex.min.css"
 
 const API_BASE_CHAT = "http://localhost:3000/api/v1/chat"
 const API_BASE_PROJECTS = "http://localhost:3000/api/v1/projects"
@@ -108,7 +123,6 @@ type ChatListItem = {
   messageCount: number
 }
 
-/** Local draft before the first message creates a DB session. */
 const DRAFT_ID = "__draft__"
 
 function authHeaders() {
@@ -154,6 +168,110 @@ function mapListItem(c: ChatListItem): ChatSession {
   }
 }
 
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      components={{
+        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+        pre: ({ children }) => (
+          <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
+            {children}
+          </pre>
+        ),
+        code: ({ className, children, ...props }) => {
+          const isBlock = className?.startsWith("language-")
+          if (isBlock) {
+            return (
+              <code className={className} {...props}>
+                {children}
+              </code>
+            )
+          }
+          return (
+            <code
+              className="rounded bg-muted/50 px-1.5 py-0.5 text-xs"
+              {...props}
+            >
+              {children}
+            </code>
+          )
+        },
+        ul: ({ children }) => (
+          <ul className="mb-2 list-inside list-disc space-y-1">{children}</ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="mb-2 list-inside list-decimal space-y-1">
+            {children}
+          </ol>
+        ),
+        li: ({ children }) => <li>{children}</li>,
+        h1: ({ children }) => (
+          <h1 className="mb-2 text-lg font-semibold">{children}</h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className="mb-2 text-base font-semibold">{children}</h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="mb-1 text-sm font-semibold">{children}</h3>
+        ),
+        blockquote: ({ children }) => (
+          <blockquote className="border-l-2 border-muted-foreground/30 pl-3 italic text-muted-foreground">
+            {children}
+          </blockquote>
+        ),
+        table: ({ children }) => (
+          <div className="mb-2 overflow-x-auto">
+            <table className="w-full text-sm">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="border-b border-border px-2 py-1 text-left font-medium">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="border-b border-border px-2 py-1">{children}</td>
+        ),
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            {children}
+          </a>
+        ),
+        hr: () => <hr className="my-3 border-border" />,
+      }}
+    >
+      {content}
+    </Markdown>
+  )
+}
+
+function ExpandableMessage({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const needsTruncate = content.length > 300
+  const display = expanded || !needsTruncate ? content : content.slice(0, 300) + "…"
+
+  return (
+    <div>
+      <p className="whitespace-pre-wrap">{display}</p>
+      {needsTruncate && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-1 text-xs font-medium text-primary/80 hover:text-primary"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([emptyDraft()])
   const [activeId, setActiveId] = useState(DRAFT_ID)
@@ -171,14 +289,26 @@ export default function ChatPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [showChats, setShowChats] = useState(true)
   const [showProjects, setShowProjects] = useState(true)
-  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set())
-  const [showCreateInput, setShowCreateInput] = useState(false)
-  const [newProjectName, setNewProjectName] = useState("")
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
+    new Set()
+  )
   const [creatingProject, setCreatingProject] = useState(false)
+  const [newProjectName, setNewProjectName] = useState("")
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [editProjectName, setEditProjectName] = useState("")
   const [editProjectPrompt, setEditProjectPrompt] = useState("")
   const [savingProject, setSavingProject] = useState(false)
+
+  // Modal states
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false)
+  const [showEditProjectModal, setShowEditProjectModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: "chat" | "project"
+    id: string
+    name: string
+  } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
   const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -188,7 +318,6 @@ export default function ChatPage() {
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
 
   const fetchChatPage = useCallback(async (cursor?: string | null) => {
-    console.log(`[chat:fetchChatPage] Fetching chat list${cursor ? ` (cursor=${cursor})` : ""}`);
     const { data } = await axios.get(`${API_BASE_CHAT}/`, {
       headers: authHeaders(),
       params: {
@@ -196,7 +325,6 @@ export default function ChatPage() {
         ...(cursor ? { cursor } : {}),
       },
     })
-    console.log(`[chat:fetchChatPage] Received ${data.chats?.length ?? 0} chats, hasMore=${data.hasMore}, nextCursor=${data.nextCursor ?? "none"}`);
     return data as {
       chats: ChatListItem[]
       nextCursor: string | null
@@ -218,12 +346,11 @@ export default function ChatPage() {
         }))
       )
     } catch (e) {
-      console.error(`[chat:loadProjects] Error:`, e)
+      console.error("[chat:loadProjects]", e)
     }
   }, [])
 
   const loadChats = useCallback(async () => {
-    console.log(`[chat:loadChats] Loading chat list`);
     setLoading(true)
     setError("")
     try {
@@ -232,11 +359,8 @@ export default function ChatPage() {
 
       setNextCursor(data.nextCursor ?? null)
       setHasMore(Boolean(data.hasMore))
-      console.log(`[chat:loadChats] Fetched ${chats.length} chats, hasMore=${data.hasMore}`);
 
       setSessions((prev) => {
-        // Preserve any in-memory sessions that already have loaded messages
-        // (e.g. active thread) when remapping list metadata.
         const loadedById = new Map(
           prev
             .filter((s) => s.id !== DRAFT_ID && s.messagesLoaded)
@@ -255,7 +379,9 @@ export default function ChatPage() {
         const draftSession = prev.find(
           (s) => s.id === DRAFT_ID && s.messages.length === 0
         )
-        return draftSession ? [draftSession, ...merged] : [emptyDraft(), ...merged]
+        return draftSession
+          ? [draftSession, ...merged]
+          : [emptyDraft(), ...merged]
       })
 
       setActiveId((current) => {
@@ -263,21 +389,17 @@ export default function ChatPage() {
         if (chats.some((c) => c.id === current)) return current
         return DRAFT_ID
       })
-    } catch (e) {
-      console.error(`[chat:loadChats] Error:`, e)
-      setError("Could not load chats. Sign in and ensure the backend is running.")
+    } catch {
+      setError(
+        "Could not load chats. Sign in and ensure the backend is running."
+      )
     } finally {
-      console.log(`[chat:loadChats] Done`);
       setLoading(false)
     }
   }, [fetchChatPage])
 
   const loadMoreChats = useCallback(async () => {
-    if (!hasMore || !nextCursor || loadingMoreRef.current) {
-      console.log(`[chat:loadMoreChats] Skipping — hasMore=${hasMore}, nextCursor=${nextCursor}, loading=${loadingMoreRef.current}`);
-      return
-    }
-    console.log(`[chat:loadMoreChats] Loading more chats (cursor=${nextCursor})`);
+    if (!hasMore || !nextCursor || loadingMoreRef.current) return
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
@@ -286,16 +408,14 @@ export default function ChatPage() {
 
       setNextCursor(data.nextCursor ?? null)
       setHasMore(Boolean(data.hasMore))
-      console.log(`[chat:loadMoreChats] Loaded ${chats.length} more chats, hasMore=${data.hasMore}`);
 
       setSessions((prev) => {
         const existingIds = new Set(prev.map((s) => s.id))
         const fresh = chats.filter((c) => !existingIds.has(c.id))
-        console.log(`[chat:loadMoreChats] ${fresh.length} new chats added`);
         return [...prev, ...fresh]
       })
     } catch (e) {
-      console.error(`[chat:loadMoreChats] Error:`, e)
+      console.error("[chat:loadMoreChats]", e)
     } finally {
       loadingMoreRef.current = false
       setLoadingMore(false)
@@ -303,12 +423,7 @@ export default function ChatPage() {
   }, [fetchChatPage, hasMore, nextCursor])
 
   const loadChatMessages = useCallback(async (chatId: string) => {
-    if (chatId === DRAFT_ID) {
-      console.log(`[chat:loadChatMessages] Skipping draft chat`);
-      return
-    }
-    console.log(`[chat:loadChatMessages] Loading messages for chatId=${chatId}`);
-
+    if (chatId === DRAFT_ID) return
     setLoadingMessages(true)
     try {
       const { data } = await axios.get(`${API_BASE_CHAT}/${chatId}`, {
@@ -334,8 +449,6 @@ export default function ChatPage() {
             : new Date(m.createdAt).toISOString(),
       }))
 
-      console.log(`[chat:loadChatMessages] Fetched chat: "${chat.title}", ${messages.length} messages`);
-
       setSessions((prev) =>
         prev.map((s) =>
           s.id === chatId
@@ -356,9 +469,7 @@ export default function ChatPage() {
             : s
         )
       )
-      console.log(`[chat:loadChatMessages] State updated for chatId=${chatId}`);
     } catch (e) {
-      console.error(`[chat:loadChatMessages] Error for chatId=${chatId}:`, e)
       setError(
         axios.isAxiosError(e)
           ? (e.response?.data?.message as string) || e.message
@@ -374,7 +485,6 @@ export default function ChatPage() {
     void loadProjects()
   }, [loadChats, loadProjects])
 
-  // Fetch messages when selecting a chat that hasn't been loaded yet
   useEffect(() => {
     if (!activeId || activeId === DRAFT_ID) return
     const session = sessions.find((s) => s.id === activeId)
@@ -382,18 +492,17 @@ export default function ChatPage() {
     void loadChatMessages(activeId)
   }, [activeId, sessions, loadChatMessages])
 
-  // Infinite scroll for chat list
   useEffect(() => {
     const el = loadMoreRef.current
     if (!el) return
-
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
-          void loadMoreChats()
-        }
+        if (entries[0]?.isIntersecting) void loadMoreChats()
       },
-      { root: el.closest('[data-sidebar="content"]') ?? null, rootMargin: "80px" }
+      {
+        root: el.closest('[data-sidebar="content"]') ?? null,
+        rootMargin: "80px",
+      }
     )
     observer.observe(el)
     return () => observer.disconnect()
@@ -409,7 +518,9 @@ export default function ChatPage() {
   const unfiledChats = useMemo(() => {
     const q = query.trim().toLowerCase()
     return sessions
-      .filter((s) => !s.projectId && (q ? s.title.toLowerCase().includes(q) : true))
+      .filter(
+        (s) => !s.projectId && (q ? s.title.toLowerCase().includes(q) : true)
+      )
       .sort(sortSessions)
   }, [sessions, query])
 
@@ -453,22 +564,17 @@ export default function ChatPage() {
     if (id === DRAFT_ID) return
     const session = sessions.find((s) => s.id === id)
     if (!session) return
-
     const nextPinned = !session.pinned
-    console.log(`[chat:togglePin] Toggling pin for chatId=${id}: ${session.pinned} → ${nextPinned}`);
     setSessions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, pinned: nextPinned } : s))
     )
-
     try {
       await axios.patch(
         `${API_BASE_CHAT}/${id}`,
         { pinned: nextPinned },
         { headers: authHeaders() }
       )
-      console.log(`[chat:togglePin] Server confirmed pin=${nextPinned} for chatId=${id}`);
-    } catch (e) {
-      console.error(`[chat:togglePin] Error:`, e)
+    } catch {
       setSessions((prev) =>
         prev.map((s) => (s.id === id ? { ...s, pinned: !nextPinned } : s))
       )
@@ -477,29 +583,14 @@ export default function ChatPage() {
 
   const deleteChat = async (id: string) => {
     if (id === DRAFT_ID) return
-    const session = sessions.find((s) => s.id === id)
-    if (!session) return
-
-    const confirmed = window.confirm(`Delete “${session.title}”? This cannot be undone.`)
-    if (!confirmed) return
-
     const snapshot = sessions
     setSessions((prev) => prev.filter((s) => s.id !== id))
-    if (activeId === id) {
-      setActiveId(DRAFT_ID)
-    }
-
+    if (activeId === id) setActiveId(DRAFT_ID)
     try {
       await axios.delete(`${API_BASE_CHAT}/${id}`, { headers: authHeaders() })
-      console.log(`[chat:deleteChat] Deleted chatId=${id}`)
-    } catch (e) {
-      console.error(`[chat:deleteChat] Error:`, e)
+    } catch {
       setSessions(snapshot)
-      setError(
-        axios.isAxiosError(e)
-          ? (e.response?.data?.message as string) || e.message
-          : "Failed to delete chat"
-      )
+      setError("Failed to delete chat")
     }
   }
 
@@ -509,30 +600,20 @@ export default function ChatPage() {
       projectId == null
         ? null
         : projects.find((p) => p.id === projectId)?.name ?? null
-
     setSessions((prev) =>
       prev.map((s) =>
-        s.id === chatId
-          ? { ...s, projectId, projectName }
-          : s
+        s.id === chatId ? { ...s, projectId, projectName } : s
       )
     )
-
     try {
       await axios.patch(
         `${API_BASE_CHAT}/${chatId}`,
         { projectId },
         { headers: authHeaders() }
       )
-      console.log(`[chat:moveToProject] chatId=${chatId} → projectId=${projectId ?? "none"}`)
       void loadProjects()
-    } catch (e) {
-      console.error(`[chat:moveToProject] Error:`, e)
-      setError(
-        axios.isAxiosError(e)
-          ? (e.response?.data?.message as string) || e.message
-          : "Failed to move chat"
-      )
+    } catch {
+      setError("Failed to move chat")
       void loadChats()
     }
   }
@@ -558,13 +639,9 @@ export default function ChatPage() {
         ...prev,
       ])
       setNewProjectName("")
-    } catch (e) {
-      console.error(`[chat:createProject] Error:`, e)
-      setError(
-        axios.isAxiosError(e)
-          ? (e.response?.data?.message as string) || e.message
-          : "Failed to create project"
-      )
+      setShowCreateProjectModal(false)
+    } catch {
+      setError("Failed to create project")
     } finally {
       setCreatingProject(false)
     }
@@ -574,6 +651,7 @@ export default function ChatPage() {
     setEditingProject(project)
     setEditProjectName(project.name)
     setEditProjectPrompt(project.systemPrompt ?? "")
+    setShowEditProjectModal(true)
   }
 
   const saveProject = async () => {
@@ -609,59 +687,53 @@ export default function ChatPage() {
             : s
         )
       )
+      setShowEditProjectModal(false)
       setEditingProject(null)
-    } catch (e) {
-      console.error(`[chat:saveProject] Error:`, e)
-      setError(
-        axios.isAxiosError(e)
-          ? (e.response?.data?.message as string) || e.message
-          : "Failed to update project"
-      )
+    } catch {
+      setError("Failed to update project")
     } finally {
       setSavingProject(false)
     }
   }
 
-  const deleteProject = async (projectId: string) => {
-    const project = projects.find((p) => p.id === projectId)
-    if (!project) return
-    const confirmed = window.confirm(
-      `Delete project “${project.name}”? Chats will be unfiled, not deleted.`
-    )
-    if (!confirmed) return
-
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
     try {
-      await axios.delete(`${API_BASE_PROJECTS}/${projectId}`, {
-        headers: authHeaders(),
-      })
-      setProjects((prev) => prev.filter((p) => p.id !== projectId))
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.projectId === projectId
-            ? { ...s, projectId: null, projectName: null }
-            : s
+      if (deleteTarget.type === "chat") {
+        await deleteChat(deleteTarget.id)
+      } else {
+        await axios.delete(`${API_BASE_PROJECTS}/${deleteTarget.id}`, {
+          headers: authHeaders(),
+        })
+        setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id))
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.projectId === deleteTarget.id
+              ? { ...s, projectId: null, projectName: null }
+              : s
+          )
         )
-      )
-      if (editingProject?.id === projectId) setEditingProject(null)
-    } catch (e) {
-      console.error(`[chat:deleteProject] Error:`, e)
+        if (editingProject?.id === deleteTarget.id) {
+          setShowEditProjectModal(false)
+          setEditingProject(null)
+        }
+      }
+    } catch {
       setError(
-        axios.isAxiosError(e)
-          ? (e.response?.data?.message as string) || e.message
-          : "Failed to delete project"
+        `Failed to delete ${deleteTarget.type === "chat" ? "chat" : "project"}`
       )
+    } finally {
+      setDeleting(false)
+      setDeleteTarget(null)
     }
   }
 
   const sendMessage = async () => {
     const text = draft.trim()
-    if (!text || !active || sending) {
-      console.log(`[chat:sendMessage] Skipping — text="${text}", active=${!!active}, sending=${sending}`);
-      return
-    }
+    if (!text || !active || sending) return
 
     const content = attachedName ? `${text}\n\n📎 ${attachedName}` : text
-    console.log(`[chat:sendMessage] Sending message: activeId="${active.id}", content="${content.slice(0, 120)}${content.length > 120 ? "…" : ""}"`);
     const tempUserId = `temp-user-${crypto.randomUUID()}`
     const optimisticUser: Message = {
       id: tempUserId,
@@ -694,12 +766,10 @@ export default function ChatPage() {
     try {
       const body: { message: string; chatId?: string } = { message: content }
       if (active.id !== DRAFT_ID) body.chatId = active.id
-      console.log(`[chat:sendMessage] POST /message — body.chatId=${body.chatId ?? "none (new session)"}`);
 
       const { data } = await axios.post(`${API_BASE_CHAT}/message`, body, {
         headers: authHeaders(),
       })
-      console.log(`[chat:sendMessage] Response: chatId=${data.chatId}, isNewSession=${data.isNewSession}, sources=${data.sources?.length ?? 0}`);
 
       const chatId: string = data.chatId
       const userMsg: Message = {
@@ -714,7 +784,6 @@ export default function ChatPage() {
         content: data.assistantMessage.content,
         createdAt: data.assistantMessage.createdAt,
       }
-      console.log(`[chat:sendMessage] Assistant response length: ${assistantMsg.content.length} chars`);
 
       setSessions((prev) => {
         const rest = prev.filter((s) => s.id !== active.id && s.id !== chatId)
@@ -740,7 +809,6 @@ export default function ChatPage() {
         }
 
         const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
-        // Keep draft first, then re-sort: pinned chats float to top
         const withUpdated = needsDraft
           ? [emptyDraft(), updated, ...rest]
           : [updated, ...rest]
@@ -748,7 +816,6 @@ export default function ChatPage() {
       })
       setActiveId(chatId)
     } catch (e) {
-      console.error(`[chat:sendMessage] Error:`, e)
       setError(
         axios.isAxiosError(e)
           ? (e.response?.data?.message as string) || e.message
@@ -784,18 +851,28 @@ export default function ChatPage() {
 
   return (
     <SidebarProvider defaultOpen className="h-svh! min-h-0!">
-      <Sidebar collapsible="offcanvas" className="border-r">
-        <SidebarHeader className="gap-3 border-b border-sidebar-border p-3">
-          <div className="flex items-center gap-2.5 px-1">
-            <span className="font-display text-base font-medium tracking-tight">
+      <Sidebar collapsible="icon" className="border-r">
+        <SidebarHeader className="gap-2 border-b border-sidebar-border p-2">
+          <div className="flex items-center gap-2">
+            <SidebarTrigger />
+            <span className="font-display text-base font-medium tracking-tight truncate group-data-[collapsible=icon]:hidden">
               RecallOS
             </span>
           </div>
-          <Button className="w-full justify-start gap-2 font-medium" onClick={createChat}>
-            <SquarePen className="size-4" />
-            New chat
-          </Button>
-          <div className="relative">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                onClick={createChat}
+                tooltip="New chat"
+              >
+                <SquarePen className="size-4" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">
+                  New chat
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <div className="relative group-data-[collapsible=icon]:hidden">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
               value={query}
@@ -813,74 +890,48 @@ export default function ChatPage() {
                 onClick={() => setShowProjects(!showProjects)}
                 className="flex w-full cursor-pointer items-center gap-1.5"
               >
-                <span className="">Projects</span>
+                <Folder className="size-4 shrink-0" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">
+                  Projects
+                </span>
                 {showProjects ? (
-                  <ChevronDown className="size-3" />
+                  <ChevronDown className="size-3 group-data-[collapsible=icon]:hidden" />
                 ) : (
-                  <ChevronRight className="size-3" />
+                  <ChevronRight className="size-3 group-data-[collapsible=icon]:hidden" />
                 )}
-                <span className="text-[10px] opacity-60">{projects.length}</span>
+                <span className="text-[10px] opacity-60 group-data-[collapsible=icon]:hidden">
+                  {projects.length}
+                </span>
                 <span
-                  className="ml-auto flex size-3.5 items-center justify-center rounded opacity-60 hover:opacity-100"
-                  title={showCreateInput ? "Close" : "New project"}
+                  className="ml-auto flex size-3.5 items-center justify-center rounded opacity-60 hover:opacity-100 group-data-[collapsible=icon]:hidden"
+                  title="New project"
                   onClick={(e) => {
                     e.stopPropagation()
-                    setShowCreateInput((v) => !v)
+                    setShowCreateProjectModal(true)
                   }}
                 >
                   <Plus className="size-3" />
                 </span>
               </button>
             </SidebarGroupLabel>
-                {showProjects && (
-                  <SidebarGroupContent className="animate-sidebar-section">
-                {showCreateInput && (
-                  <div className="mb-2 flex gap-1.5 px-1">
-                    <input
-                      value={newProjectName}
-                      onChange={(e) => setNewProjectName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          void createProject()
-                        }
-                      }}
-                      placeholder="New project…"
-                      className="h-8 min-w-0 flex-1 rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 shrink-0 px-2"
-                      disabled={!newProjectName.trim() || creatingProject}
-                      onClick={() => {
-                        void createProject()
-                        setShowCreateInput(false)
-                      }}
-                      title="Create project"
-                    >
-                      {creatingProject ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <FolderPlus className="size-3.5" />
-                      )}
-                    </Button>
-                  </div>
-                )}
+            {showProjects && (
+              <SidebarGroupContent className="animate-sidebar-section">
                 {projects.length === 0 ? (
-                  <p className="px-2 py-2 text-xs text-muted-foreground">
-                    No projects yet. Create one to organize chats and set a project system prompt.
+                  <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+                    No projects yet.
                   </p>
                 ) : (
                   <SidebarMenu>
                     {projects.map((project) => {
                       const expanded = expandedProjectIds.has(project.id)
-                      const projectChats = projectChatsMap.get(project.id) ?? []
+                      const projectChats =
+                        projectChatsMap.get(project.id) ?? []
                       return (
                         <Fragment key={project.id}>
                           <SidebarMenuItem>
                             <SidebarMenuButton
                               className="h-auto items-center gap-2 py-1.5"
+                              tooltip={project.name}
                               onClick={() =>
                                 setExpandedProjectIds((prev) => {
                                   const next = new Set(prev)
@@ -892,16 +943,16 @@ export default function ChatPage() {
                               }
                             >
                               <Folder className="size-3 shrink-0 opacity-70" />
-                              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                              <span className="min-w-0 flex-1 truncate text-xs font-medium group-data-[collapsible=icon]:hidden">
                                 {project.name}
                               </span>
                               {expanded ? (
-                                <ChevronDown className="size-3 shrink-0 opacity-70" />
+                                <ChevronDown className="size-3 shrink-0 opacity-70 group-data-[collapsible=icon]:hidden" />
                               ) : (
-                                <ChevronRight className="size-3 shrink-0 opacity-70" />
+                                <ChevronRight className="size-3 shrink-0 opacity-70 group-data-[collapsible=icon]:hidden" />
                               )}
                               {typeof project.chatCount === "number" && (
-                                <span className="text-[10px] opacity-60">
+                                <span className="text-[10px] opacity-60 group-data-[collapsible=icon]:hidden">
                                   {project.chatCount}
                                 </span>
                               )}
@@ -916,13 +967,17 @@ export default function ChatPage() {
                           </SidebarMenuItem>
                           {expanded &&
                             projectChats.map((chat) => (
-                              <SidebarMenuItem key={chat.id} className="pl-8">
+                              <SidebarMenuItem
+                                key={chat.id}
+                                className="pl-8 group-data-[collapsible=icon]:pl-0"
+                              >
                                 <SidebarMenuButton
                                   isActive={chat.id === active?.id}
                                   onClick={() => selectChat(chat.id)}
                                   className="h-auto py-1.5"
+                                  tooltip={chat.title}
                                 >
-                                  <span className="truncate text-xs">
+                                  <span className="truncate text-xs group-data-[collapsible=icon]:hidden">
                                     {chat.title}
                                   </span>
                                 </SidebarMenuButton>
@@ -944,7 +999,9 @@ export default function ChatPage() {
                                       onClick={(e) => e.stopPropagation()}
                                     >
                                       <DropdownMenuItem
-                                        onClick={() => void togglePin(chat.id)}
+                                        onClick={() =>
+                                          void togglePin(chat.id)
+                                        }
                                       >
                                         {chat.pinned ? (
                                           <>
@@ -966,7 +1023,10 @@ export default function ChatPage() {
                                         <DropdownMenuSubContent className="w-48">
                                           <DropdownMenuItem
                                             onClick={() =>
-                                              void moveToProject(chat.id, null)
+                                              void moveToProject(
+                                                chat.id,
+                                                null
+                                              )
                                             }
                                           >
                                             {!chat.projectId && (
@@ -974,7 +1034,9 @@ export default function ChatPage() {
                                             )}
                                             <span
                                               className={
-                                                chat.projectId ? "pl-5" : undefined
+                                                chat.projectId
+                                                  ? "pl-5"
+                                                  : undefined
                                               }
                                             >
                                               No project
@@ -993,12 +1055,14 @@ export default function ChatPage() {
                                                 )
                                               }
                                             >
-                                              {chat.projectId === project.id && (
+                                              {chat.projectId ===
+                                                project.id && (
                                                 <Check className="size-3.5" />
                                               )}
                                               <span
                                                 className={
-                                                  chat.projectId === project.id
+                                                  chat.projectId ===
+                                                  project.id
                                                     ? undefined
                                                     : "pl-5"
                                                 }
@@ -1007,17 +1071,18 @@ export default function ChatPage() {
                                               </span>
                                             </DropdownMenuItem>
                                           ))}
-                                          {projects.length === 0 && (
-                                            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                                              Create a project first
-                                            </DropdownMenuLabel>
-                                          )}
                                         </DropdownMenuSubContent>
                                       </DropdownMenuSub>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
                                         variant="destructive"
-                                        onClick={() => void deleteChat(chat.id)}
+                                        onClick={() =>
+                                          setDeleteTarget({
+                                            type: "chat",
+                                            id: chat.id,
+                                            name: chat.title,
+                                          })
+                                        }
                                       >
                                         <Trash2 className="size-3.5" />
                                         Delete
@@ -1032,56 +1097,6 @@ export default function ChatPage() {
                     })}
                   </SidebarMenu>
                 )}
-                {editingProject && (
-                  <div className="mt-2 space-y-2 rounded-md border border-sidebar-border bg-background/80 p-2">
-                    <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                      Edit project
-                    </p>
-                    <input
-                      value={editProjectName}
-                      onChange={(e) => setEditProjectName(e.target.value)}
-                      className="h-8 w-full rounded-md border border-sidebar-border bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      placeholder="Project name"
-                    />
-                    <textarea
-                      value={editProjectPrompt}
-                      onChange={(e) => setEditProjectPrompt(e.target.value)}
-                      rows={3}
-                      placeholder="Extra system prompt for chats in this project…"
-                      className="w-full resize-y rounded-md border border-sidebar-border bg-background px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    />
-                    <div className="flex flex-wrap gap-1.5">
-                      <Button
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        disabled={savingProject || !editProjectName.trim()}
-                        onClick={() => void saveProject()}
-                      >
-                        {savingProject ? (
-                          <Loader2 className="size-3 animate-spin" />
-                        ) : (
-                          "Save"
-                        )}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => setEditingProject(null)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                        onClick={() => void deleteProject(editingProject.id)}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </SidebarGroupContent>
             )}
           </SidebarGroup>
@@ -1092,188 +1107,203 @@ export default function ChatPage() {
                 onClick={() => setShowChats(!showChats)}
                 className="flex w-full cursor-pointer items-center gap-1.5"
               >
-                <span>Chats</span>
+                <FileText className="size-4 shrink-0" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">
+                  Chats
+                </span>
                 {showChats ? (
-                  <ChevronDown className="size-3" />
+                  <ChevronDown className="size-3 group-data-[collapsible=icon]:hidden" />
                 ) : (
-                  <ChevronRight className="size-3" />
+                  <ChevronRight className="size-3 group-data-[collapsible=icon]:hidden" />
                 )}
-                <span className="ml-auto text-[10px] opacity-60">
+                <span className="ml-auto text-[10px] opacity-60 group-data-[collapsible=icon]:hidden">
                   {unfiledChats.length}
                 </span>
               </button>
             </SidebarGroupLabel>
-                {showChats && (
-                  <SidebarGroupContent className="animate-sidebar-section">
-              <SidebarMenu>
-                {loading && sessions.length <= 1 && (
-                  <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                    Loading chats…
-                  </p>
-                )}
-                {unfiledChats.length === 0 && !loading && (
-                  <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                    No chats match your search.
-                  </p>
-                )}
-                {unfiledChats.map((session) => {
-                  const selected = session.id === active?.id
-                  return (
-                    <SidebarMenuItem key={session.id}>
-                      <SidebarMenuButton
-                        isActive={selected}
-                        onClick={() => selectChat(session.id)}
-                        className="h-auto flex-col items-start gap-0.5 py-2 pr-8"
-                      >
-                        <span className="flex w-full items-center gap-1.5">
-                          {session.pinned && (
-                            <Pin className="size-3 shrink-0 opacity-70" />
-                          )}
-                          <span className="truncate text-xs font-medium">
-                            {session.title}
+            {showChats && (
+              <SidebarGroupContent className="animate-sidebar-section">
+                <SidebarMenu>
+                  {loading && sessions.length <= 1 && (
+                    <p className="px-2 py-6 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
+                      Loading chats…
+                    </p>
+                  )}
+                  {unfiledChats.length === 0 && !loading && (
+                    <p className="px-2 py-6 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
+                      No chats match your search.
+                    </p>
+                  )}
+                  {unfiledChats.map((session) => {
+                    const selected = session.id === active?.id
+                    return (
+                      <SidebarMenuItem key={session.id}>
+                        <SidebarMenuButton
+                          isActive={selected}
+                          onClick={() => selectChat(session.id)}
+                          className="h-auto flex-col items-start gap-0.5 py-2 pr-8 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:pr-2"
+                          tooltip={session.title}
+                        >
+                          <span className="flex w-full items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+                            {session.pinned && (
+                              <Pin className="size-3 shrink-0 opacity-70" />
+                            )}
+                            <span className="truncate text-xs font-medium">
+                              {session.title}
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-[10px] opacity-70">
-                          {formatChatTime(session.updatedAt)} ·{" "}
-                          {session.messageCount} messages
-                          {session.projectName
-                            ? ` · ${session.projectName}`
-                            : ""}
-                        </span>
-                      </SidebarMenuButton>
-                      {session.id !== DRAFT_ID && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <SidebarMenuAction
-                              showOnHover
-                              title="More"
+                          <span className="text-[10px] opacity-70 group-data-[collapsible=icon]:hidden">
+                            {formatChatTime(session.updatedAt)} ·{" "}
+                            {session.messageCount} messages
+                            {session.projectName
+                              ? ` · ${session.projectName}`
+                              : ""}
+                          </span>
+                        </SidebarMenuButton>
+                        {session.id !== DRAFT_ID && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <SidebarMenuAction
+                                showOnHover
+                                title="More"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreHorizontal className="size-3.5" />
+                              </SidebarMenuAction>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              side="right"
+                              align="start"
+                              className="w-48"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <MoreHorizontal className="size-3.5" />
-                            </SidebarMenuAction>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            side="right"
-                            align="start"
-                            className="w-48"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <DropdownMenuItem
-                              onClick={() => void togglePin(session.id)}
-                            >
-                              {session.pinned ? (
-                                <>
-                                  <PinOff className="size-3.5" />
-                                  Unpin
-                                </>
-                              ) : (
-                                <>
-                                  <Pin className="size-3.5" />
-                                  Pin
-                                </>
-                              )}
-                            </DropdownMenuItem>
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger>
-                                <FolderInput className="size-3.5" />
-                                Move to project
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="w-48">
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    void moveToProject(session.id, null)
-                                  }
-                                >
-                                  {!session.projectId && (
-                                    <Check className="size-3.5" />
-                                  )}
-                                  <span
-                                    className={
-                                      session.projectId ? "pl-5" : undefined
-                                    }
-                                  >
-                                    No project
-                                  </span>
-                                </DropdownMenuItem>
-                                {projects.length > 0 && (
-                                  <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => void togglePin(session.id)}
+                              >
+                                {session.pinned ? (
+                                  <>
+                                    <PinOff className="size-3.5" />
+                                    Unpin
+                                  </>
+                                ) : (
+                                  <>
+                                    <Pin className="size-3.5" />
+                                    Pin
+                                  </>
                                 )}
-                                {projects.map((project) => (
+                              </DropdownMenuItem>
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger>
+                                  <FolderInput className="size-3.5" />
+                                  Move to project
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="w-48">
                                   <DropdownMenuItem
-                                    key={project.id}
                                     onClick={() =>
-                                      void moveToProject(
-                                        session.id,
-                                        project.id
-                                      )
+                                      void moveToProject(session.id, null)
                                     }
                                   >
-                                    {session.projectId === project.id && (
+                                    {!session.projectId && (
                                       <Check className="size-3.5" />
                                     )}
                                     <span
                                       className={
-                                        session.projectId === project.id
-                                          ? undefined
-                                          : "pl-5"
+                                        session.projectId
+                                          ? "pl-5"
+                                          : undefined
                                       }
                                     >
-                                      {project.name}
+                                      No project
                                     </span>
                                   </DropdownMenuItem>
-                                ))}
-                                {projects.length === 0 && (
-                                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                                    Create a project first
-                                  </DropdownMenuLabel>
-                                )}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onClick={() => void deleteChat(session.id)}
-                            >
-                              <Trash2 className="size-3.5" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </SidebarMenuItem>
-                  )
-                })}
-              </SidebarMenu>
+                                  {projects.length > 0 && (
+                                    <DropdownMenuSeparator />
+                                  )}
+                                  {projects.map((project) => (
+                                    <DropdownMenuItem
+                                      key={project.id}
+                                      onClick={() =>
+                                        void moveToProject(
+                                          session.id,
+                                          project.id
+                                        )
+                                      }
+                                    >
+                                      {session.projectId === project.id && (
+                                        <Check className="size-3.5" />
+                                      )}
+                                      <span
+                                        className={
+                                          session.projectId === project.id
+                                            ? undefined
+                                            : "pl-5"
+                                        }
+                                      >
+                                        {project.name}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  ))}
+                                  {projects.length === 0 && (
+                                    <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                      Create a project first
+                                    </DropdownMenuLabel>
+                                  )}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onClick={() =>
+                                  setDeleteTarget({
+                                    type: "chat",
+                                    id: session.id,
+                                    name: session.title,
+                                  })
+                                }
+                              >
+                                <Trash2 className="size-3.5" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
 
-              {/* Sentinel for infinite scroll */}
-              <div ref={loadMoreRef} className="h-1 w-full" />
-              {loadingMore && (
-                <p className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" />
-                  Loading more…
-                </p>
-              )}
-              {!hasMore && sessions.some((s) => s.id !== DRAFT_ID) && !loading && (
-                <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                  End of chats
-                </p>
-              )}
-            </SidebarGroupContent>
+                <div ref={loadMoreRef} className="h-1 w-full" />
+                {loadingMore && (
+                  <p className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Loading more…
+                  </p>
+                )}
+                {!hasMore &&
+                  sessions.some((s) => s.id !== DRAFT_ID) &&
+                  !loading && (
+                    <p className="px-2 py-3 text-center text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+                      End of chats
+                    </p>
+                  )}
+              </SidebarGroupContent>
             )}
           </SidebarGroup>
         </SidebarContent>
 
-        <SidebarFooter className="border-t border-sidebar-border p-3">
+        <SidebarFooter className="border-t border-sidebar-border p-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium hover:bg-sidebar-accent w-full cursor-pointer">
+              <SidebarMenuButton tooltip="Account" className="justify-center">
                 <Avatar size="sm">
                   <AvatarFallback>
                     <User className="size-3" />
                   </AvatarFallback>
                 </Avatar>
-                <span className="truncate text-xs">Account</span>
-              </button>
+                <span className="truncate text-xs group-data-[collapsible=icon]:hidden">
+                  Account
+                </span>
+              </SidebarMenuButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" className="w-48">
               <DropdownMenuItem asChild>
@@ -1296,7 +1326,6 @@ export default function ChatPage() {
 
       <SidebarInset className="min-h-0 overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border/80 px-3 sm:px-4">
-          <SidebarTrigger />
           <div className="min-w-0 flex-1">
             <h1 className="font-display truncate text-base font-medium tracking-tight sm:text-lg">
               {active?.title ?? "Chat"}
@@ -1315,14 +1344,19 @@ export default function ChatPage() {
             </Badge>
           )}
           <ThemeToggle />
-          <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
+          <Button
+            variant="ghost"
+            size="sm"
+            asChild
+            className="hidden sm:inline-flex"
+          >
             <Link href="/dashboard">Dashboard</Link>
           </Button>
         </header>
 
         <div className="relative min-h-0 flex-1">
           <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-8 pb-28 sm:px-6 sm:pb-32">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 pt-8 pb-28 sm:px-6 sm:pb-32">
               {error && (
                 <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {error}
@@ -1356,19 +1390,21 @@ export default function ChatPage() {
                 active?.messages.map((message) =>
                   message.role === "user" ? (
                     <div key={message.id} className="flex w-full justify-end">
-                      <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-base leading-relaxed text-primary-foreground sm:max-w-[75%]">
-                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-sm leading-relaxed text-primary-foreground sm:max-w-[75%]">
+                        <ExpandableMessage content={message.content} />
                       </div>
                     </div>
                   ) : (
                     <div
                       key={message.id}
-                      className="w-full space-y-2 text-base leading-7 text-foreground"
+                      className="w-full space-y-2 text-sm leading-6 text-foreground"
                     >
                       <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
                         RecallOS
                       </p>
-                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <MarkdownContent content={message.content} />
+                      </div>
                     </div>
                   )
                 )}
@@ -1466,7 +1502,7 @@ export default function ChatPage() {
                   placeholder="Ask anything about your knowledge base…"
                   rows={1}
                   disabled={sending || loadingMessages}
-                  className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-base shadow-none focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
+                  className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0"
                 />
 
                 <Button
@@ -1493,6 +1529,172 @@ export default function ChatPage() {
           </div>
         </div>
       </SidebarInset>
+
+      {/* Create Project Modal */}
+      <Dialog
+        open={showCreateProjectModal}
+        onOpenChange={setShowCreateProjectModal}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New project</DialogTitle>
+            <DialogDescription>
+              Create a project to organize chats and set a shared system prompt.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                void createProject()
+              }
+            }}
+            placeholder="Project name"
+            autoFocus
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCreateProjectModal(false)
+                setNewProjectName("")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!newProjectName.trim() || creatingProject}
+              onClick={() => void createProject()}
+            >
+              {creatingProject ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Create"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Project Modal */}
+      <Dialog
+        open={showEditProjectModal}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowEditProjectModal(false)
+            setEditingProject(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit project</DialogTitle>
+            <DialogDescription>
+              Rename the project or change its system prompt.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Name</label>
+              <Input
+                value={editProjectName}
+                onChange={(e) => setEditProjectName(e.target.value)}
+                placeholder="Project name"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">System prompt</label>
+              <Textarea
+                value={editProjectPrompt}
+                onChange={(e) => setEditProjectPrompt(e.target.value)}
+                rows={4}
+                placeholder="Extra system prompt for chats in this project…"
+                className="resize-y"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              className="text-destructive hover:text-destructive sm:mr-auto"
+              onClick={() => {
+                if (editingProject) {
+                  setDeleteTarget({
+                    type: "project",
+                    id: editingProject.id,
+                    name: editingProject.name,
+                  })
+                  setShowEditProjectModal(false)
+                }
+              }}
+            >
+              <Trash2 className="size-4" />
+              Delete project
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowEditProjectModal(false)
+                setEditingProject(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={savingProject || !editProjectName.trim()}
+              onClick={() => void saveProject()}
+            >
+              {savingProject ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Modal */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Delete {deleteTarget?.type === "chat" ? "chat" : "project"}?
+            </DialogTitle>
+            <DialogDescription>
+              {deleteTarget?.type === "chat"
+                ? `Delete "${deleteTarget?.name}"? This cannot be undone.`
+                : `Delete "${deleteTarget?.name}"? Chats will be unfiled, not deleted.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SidebarProvider>
   )
 }

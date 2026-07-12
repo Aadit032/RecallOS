@@ -233,3 +233,12 @@
     animation: none;
   }
 }
+
+[data-slot="dialog-overlay"] {
+  background: oklch(0 0 0 / 40%);
+  backdrop-filter: blur(8px);
+}
+
+button, [role="button"], a[role="button"] {
+  cursor: pointer;
+}
