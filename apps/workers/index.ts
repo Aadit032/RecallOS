@@ -173,15 +173,18 @@ async function documentStillExists(documentId: string): Promise<boolean> {
     return Boolean(row);
 }
 
-async function upsertChunks(chunks: Chunk[], documentId: string) {
+async function upsertChunks(chunks: Chunk[], documentId: string): Promise<Boolean> {
     const texts = chunks.map(chunk => chunk.text)
 
     try{
         const sparseVectors = await getSparseVectors(texts);
         const embeddings = await getDenseVectors(texts);
 
-        console.log("sparseVectors", sparseVectors);
-        console.log("embeddings", embeddings);
+        // console.log("sparseVectors", sparseVectors);
+        // console.log("embeddings", embeddings);
+
+        console.log("checking vector format before upsert: ", JSON.stringify(sparseVectors[0], null, 2));
+        console.log("checking embedding size before upsert: ", embeddings[0]!.length);
 
         const points = chunks.map((chunk, i) => ({
             id: uuidv4(),
@@ -200,8 +203,10 @@ async function upsertChunks(chunks: Chunk[], documentId: string) {
 
         await qdrantClient.upsert(COLLECTION, { wait: true, points });
         console.log("points have been upserted to qdrant!!")
+        return true;
     }catch(e){
-        console.log("Error upserting chunks: ", e instanceof Error ? e.message : e);
+        console.log("Error upserting chunks: ", e);
+        return false;
     }
 }
 
@@ -293,7 +298,14 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         }
 
         // get embeddings + store in qdrant + splade idx
-        await upsertChunks(chunks, documentId);
+        const isUpserted = await upsertChunks(chunks, documentId);
+        if(!isUpserted){
+            await prismaClient.document.update({
+                where: { id: documentId },
+                data: { status: "FAILED" }  
+            });
+            console.log(`[processDocuments] Document ${documentId} could not be upserted — marking as FAILED`);
+        }
 
         if (!(await documentStillExists(documentId))) {
             console.log(`[processDocuments] Document ${documentId} deleted after upsert — not marking COMPLETED`);

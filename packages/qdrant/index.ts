@@ -10,6 +10,8 @@ console.log(`[qdrant] Client created`);
 const COLLECTION = process.env.COLLECTION as string;
 const DENSE_DIM = process.env.DENSE_DIM;
 
+console.log(`DENSE_DIM: ${Number(DENSE_DIM)}`)
+
 async function setup(){
     console.log(`[qdrant:setup] Checking if collection "${COLLECTION}" exists`);
     const exists = await qdrantClient.collectionExists(COLLECTION);
@@ -27,3 +29,7 @@ async function setup(){
 }
 
 setup();
+
+console.log(`Checking the qdrant schema...`);
+const info = await qdrantClient.getCollection(COLLECTION);
+console.log("schema: ", info);
