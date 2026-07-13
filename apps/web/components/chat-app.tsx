@@ -353,6 +353,7 @@ function ChatLayout() {
   const [editProjectName, setEditProjectName] = useState("")
   const [editProjectPrompt, setEditProjectPrompt] = useState("")
   const [savingProject, setSavingProject] = useState(false)
+  const [useragent, setUseragent] = useState<string>("");
 
   // Floating panel states
   const [openPanel, setOpenPanel] = useState<"projects" | "chats" | null>(null)
@@ -502,6 +503,7 @@ function ChatLayout() {
   useEffect(() => {
     const el = loadMoreRef.current
     if (!el) return
+
     const observer = new IntersectionObserver(
       (entries) => { if (entries[0]?.isIntersecting) void loadMoreChats() },
       { root: el.closest('[data-sidebar="content"]') ?? null, rootMargin: "80px" }
@@ -509,6 +511,13 @@ function ChatLayout() {
     observer.observe(el)
     return () => observer.disconnect()
   }, [loadMoreChats, sessions.length])
+
+  useEffect(() => {
+      if (navigator.userAgent) {
+        console.log("useragent:", navigator.userAgent);
+        setUseragent(navigator.userAgent);
+      }
+  })
 
   /* ── Derived data ─────────────────────────────────────────── */
 
@@ -667,7 +676,7 @@ function ChatLayout() {
   /* ── Send message ─────────────────────────────────────────── */
 
   const sendMessage = async () => {
-    const text = draft.trim()
+    const text = draft.trim() + "useragent info from browser: " + useragent;
     if (!text || !active || sending) return
 
     // Upload attached file first

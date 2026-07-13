@@ -125,7 +125,7 @@ function buildSystemPrompt(
     const projectBlock =
         projectSystemPrompt && projectSystemPrompt.trim().length > 0
             ? `\n\nAdditional project instructions:\n${projectSystemPrompt.trim()}\n`
-            : "";
+            : "";   
 
     return `You are RecallOS, an assistant that answers questions using the user's organizational knowledge base.
         Use ONLY the context chunks below to answer. If the context is insufficient, say so clearly.
