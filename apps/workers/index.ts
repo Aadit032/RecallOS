@@ -339,5 +339,5 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 }
 
 // ========== RUN WORKERS ============
-// setInterval(claimStaleJobs, CLAIM_INTERVAL_MS);
+setInterval(claimStaleJobs, CLAIM_INTERVAL_MS);
 await workers();

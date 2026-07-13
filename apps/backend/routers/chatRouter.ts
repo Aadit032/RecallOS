@@ -226,7 +226,7 @@ chatRouter.get("/:id", async (req, res) => {
             include: {
                 messages: {
                     orderBy: { createdAt: "asc" },
-                    select: { id: true, role: true, content: true, createdAt: true },
+                    select: { id: true, role: true, content: true, sourceChunks: true, createdAt: true },
                 },
                 project: { select: { id: true, name: true } },
             },
@@ -465,6 +465,12 @@ chatRouter.post("/message", async (req, res) => {
                 chatId: chat.id,
                 role: "assistant",
                 content: assistantText,
+                sourceChunks: topChunks.map((c, i) => ({
+                    rank: i + 1,
+                    id: c.id,
+                    score: c.score,
+                    text: c.text.slice(0, 400),
+                })),
             },
         });
         console.log(`[POST /message] Assistant message persisted: id=${assistantMessage.id}`);

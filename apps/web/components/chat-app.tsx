@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import {
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -90,10 +91,18 @@ const PAGE_SIZE = 20
 
 type Role = "user" | "assistant"
 
+type SourceChunk = {
+  rank: number
+  id: string
+  score: number
+  text: string
+}
+
 type Message = {
   id: string
   role: Role
   content: string
+  sourceChunks?: SourceChunk[]
   createdAt: string
 }
 
@@ -173,7 +182,11 @@ function mapListItem(c: ChatListItem): ChatSession {
 
 /* ── Markdown renderer ────────────────────────────────────────── */
 
-function MarkdownContent({ content }: { content: string }) {
+function MarkdownContent({ content, onSourceClick }: { content: string; onSourceClick?: (rank: number) => void }) {
+  const processed = onSourceClick
+    ? content.replace(/\[(\d+)\](?!\()/g, (m, rank) => `[\u200B${rank}\u200B](source:${rank})`)
+    : content
+
   return (
     <Markdown
       remarkPlugins={[remarkGfm, remarkMath]}
@@ -200,13 +213,25 @@ function MarkdownContent({ content }: { content: string }) {
         table: ({ children }) => <div className="mb-2 overflow-x-auto"><table className="w-full text-sm">{children}</table></div>,
         th: ({ children }) => <th className="border-b border-border px-2 py-1 text-left font-medium">{children}</th>,
         td: ({ children }) => <td className="border-b border-border px-2 py-1">{children}</td>,
-        a: ({ children, href }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline-offset-2 hover:underline">{children}</a>
-        ),
+        a: ({ children, href }) => {
+          if (href?.startsWith("source:") && onSourceClick) {
+            const rank = parseInt(href.slice(7))
+            return (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); onSourceClick(rank) }}
+                className="inline-flex items-center rounded bg-primary/10 px-1 py-0.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors align-middle cursor-pointer"
+              >
+                {children}
+              </button>
+            )
+          }
+          return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline-offset-2 hover:underline">{children}</a>
+        },
         hr: () => <hr className="my-3 border-border" />,
       }}
     >
-      {content}
+      {processed}
     </Markdown>
   )
 }
@@ -332,6 +357,9 @@ function ChatLayout() {
   // Floating panel states
   const [openPanel, setOpenPanel] = useState<"projects" | "chats" | null>(null)
 
+  // Source chunks panel
+  const [openSourceMsgId, setOpenSourceMsgId] = useState<string | null>(null)
+
   // Modal states
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false)
   const [showEditProjectModal, setShowEditProjectModal] = useState(false)
@@ -442,6 +470,7 @@ function ChatLayout() {
       }
       const messages: Message[] = (chat.messages ?? []).map((m) => ({
         id: m.id, role: m.role as Role, content: m.content,
+        sourceChunks: (m.sourceChunks as SourceChunk[] | null | undefined) ?? undefined,
         createdAt: typeof m.createdAt === "string" ? m.createdAt : new Date(m.createdAt).toISOString(),
       }))
       setSessions((prev) =>
@@ -680,7 +709,7 @@ function ChatLayout() {
 
       const chatId: string = data.chatId
       const userMsg: Message = { id: data.userMessage.id, role: "user", content: data.userMessage.content, createdAt: data.userMessage.createdAt }
-      const assistantMsg: Message = { id: data.assistantMessage.id, role: "assistant", content: data.assistantMessage.content, createdAt: data.assistantMessage.createdAt }
+      const assistantMsg: Message = { id: data.assistantMessage.id, role: "assistant", content: data.assistantMessage.content, createdAt: data.assistantMessage.createdAt, sourceChunks: data.sources ?? [] }
 
       setSessions((prev) => {
         const rest = prev.filter((s) => s.id !== active.id && s.id !== chatId)
@@ -1110,6 +1139,48 @@ function ChatLayout() {
         </>
       )}
 
+      {/* Source chunks side panel */}
+      {openSourceMsgId && (() => {
+        const msg = active?.messages.find((m) => m.id === openSourceMsgId)
+        const chunks = msg?.sourceChunks
+        if (!chunks || chunks.length === 0) return null
+        return (
+          <div className="fixed inset-y-0 right-0 z-[200] w-80 border-l border-border bg-popover shadow-xl flex flex-col">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-popover/95 px-3 py-2.5 backdrop-blur-sm">
+              <div className="flex items-center gap-2">
+                <BookOpen className="size-3.5" />
+                <span className="text-xs font-medium">Sources</span>
+                <span className="text-[10px] opacity-60">{chunks.length}</span>
+              </div>
+              <button
+                onClick={() => setOpenSourceMsgId(null)}
+                className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {chunks.map((chunk) => (
+                <div key={chunk.id} id={`source-rank-${chunk.rank}`} className="rounded-md border border-border p-2.5 space-y-1.5 scroll-mt-12">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold">
+                      {chunk.rank}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground truncate" title={chunk.id}>
+                      {chunk.id.slice(0, 12)}…
+                    </span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">
+                      {(chunk.score * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{chunk.text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
       <SidebarInset className="min-h-0 overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border/80 px-3 sm:px-4">
           <div className="min-w-0 flex-1">
@@ -1163,8 +1234,28 @@ function ChatLayout() {
                   <div key={message.id} className="w-full space-y-2 text-foreground">
                     <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">RecallOS</p>
                     <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <MarkdownContent content={message.content} />
+                      <MarkdownContent
+                        content={message.content}
+                        onSourceClick={message.sourceChunks && message.sourceChunks.length > 0
+                          ? (rank) => {
+                              setOpenSourceMsgId(message.id)
+                              setTimeout(() => {
+                                const el = document.getElementById(`source-rank-${rank}`)
+                                el?.scrollIntoView({ behavior: "smooth", block: "center" })
+                              }, 100)
+                            }
+                          : undefined}
+                      />
                     </div>
+                    {message.sourceChunks && message.sourceChunks.length > 0 && (
+                      <button
+                        onClick={() => setOpenSourceMsgId(openSourceMsgId === message.id ? null : message.id)}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <BookOpen className="size-3.5" />
+                        <span>{message.sourceChunks.length} source{message.sourceChunks.length !== 1 ? "s" : ""}</span>
+                      </button>
+                    )}
                   </div>
                 )
               )}
