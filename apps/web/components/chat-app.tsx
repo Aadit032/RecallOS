@@ -741,8 +741,8 @@ function ChatLayout() {
       <Sidebar collapsible="icon" className="border-r">
         {/* ── Expanded header ────────────────────────────────── */}
         {sidebarState === "expanded" ? (
-          <SidebarHeader className="gap-2 border-b border-sidebar-border p-2">
-            <div className="flex items-center gap-2">
+          <SidebarHeader className="gap-2 p-2">
+            <div className="flex items-center gap-2 mt-3">
               <SidebarTrigger />
               <span className="font-display text-base font-medium tracking-tight truncate">
                 RecallOS
@@ -750,13 +750,13 @@ function ChatLayout() {
             </div>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={createChat} tooltip="New chat">
+                <SidebarMenuButton onClick={createChat} tooltip="New chat" className="mt-6">
                   <SquarePen className="size-4" />
                   <span className="truncate">New chat</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
-            <div className="relative">
+            <div className="relative mb-3">
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 value={query}
@@ -775,6 +775,9 @@ function ChatLayout() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
+            <div className="flex justify-center">
+              <SidebarTrigger />
+            </div>
           </SidebarHeader>
         )}
 
@@ -819,9 +822,9 @@ function ChatLayout() {
                     <Folder className="size-4 shrink-0" />
                     <span className="truncate">Projects</span>
                     {showProjects ? (
-                      <ChevronDown className="size-3" />
+                      <ChevronDown className="size-1" />
                     ) : (
-                      <ChevronRight className="size-3" />
+                      <ChevronRight className="size-1" />
                     )}
                     <span className="text-[10px] opacity-60">{projects.length}</span>
                     <span
@@ -858,16 +861,16 @@ function ChatLayout() {
                                   <Folder className="size-3 shrink-0 opacity-70" />
                                   <span className="min-w-0 flex-1 truncate text-xs font-medium">{project.name}</span>
                                   {expanded ? (
-                                    <ChevronDown className="size-3 shrink-0 opacity-70" />
+                                    <ChevronDown className="size-1 shrink-0 opacity-70" />
                                   ) : (
-                                    <ChevronRight className="size-3 shrink-0 opacity-70" />
+                                    <ChevronRight className="size-1 shrink-0 opacity-70" />
                                   )}
                                   {typeof project.chatCount === "number" && (
                                     <span className="text-[10px] opacity-60">{project.chatCount}</span>
                                   )}
                                 </SidebarMenuButton>
                                 <SidebarMenuAction showOnHover title="Edit project" onClick={() => openEditProject(project)}>
-                                  <Settings2 className="size-3.5" />
+                                  <Settings2 className="size-2 mb-1" />
                                 </SidebarMenuAction>
                               </SidebarMenuItem>
                               {expanded && projectChats.map((chat) => (
@@ -935,9 +938,9 @@ function ChatLayout() {
                     <FileText className="size-4 shrink-0" />
                     <span className="truncate">Chats</span>
                     {showChats ? (
-                      <ChevronDown className="size-3" />
+                      <ChevronDown className="size-1" />
                     ) : (
-                      <ChevronRight className="size-3" />
+                      <ChevronRight className="size-1" />
                     )}
                     <span className="ml-auto text-[10px] opacity-60">{unfiledChats.length}</span>
                   </button>
@@ -1029,14 +1032,14 @@ function ChatLayout() {
         </SidebarContent>
 
         {/* ── Footer: account ────────────────────────────────── */}
-        <SidebarFooter className="border-t border-sidebar-border p-2">
+        <SidebarFooter className="p-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <SidebarMenuButton tooltip="Account" className="justify-center">
                 <Avatar size="sm">
-                  <AvatarFallback><User className="size-3" /></AvatarFallback>
+                  <AvatarFallback><User className="size-4" /></AvatarFallback>
                 </Avatar>
-                <span className="truncate text-xs group-data-[collapsible=icon]:hidden">Account</span>
+                <span className="truncate text-md group-data-[collapsible=icon]:hidden">Account</span>
               </SidebarMenuButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" className="w-48">
@@ -1081,55 +1084,27 @@ function ChatLayout() {
             )}
           </FloatingPanel>
 
-          <FloatingPanel open={openPanel === "chats"} onClose={() => setOpenPanel(null)} title="Chats" count={unfiledChats.length}>
-            {pinnedChats.length > 0 && (
-              <>
-                <div className="mb-1 flex items-center gap-1.5 px-1">
-                  <Pin className="size-2.5 opacity-50" />
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Pinned</span>
-                </div>
-                <div className="mb-3 space-y-0.5">
-                  {pinnedChats.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => selectChat(s.id)}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent transition-colors"
-                    >
-                      <Pin className="size-2.5 shrink-0 opacity-50" />
-                      <span className="truncate font-medium">{s.title}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            <div className="mb-1 px-1">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Recent</span>
-            </div>
+          <FloatingPanel open={openPanel === "chats"} onClose={() => setOpenPanel(null)} title="Chats">
             <div className="space-y-0.5">
-              {recentChats.length === 0 && pinnedChats.length === 0 && (
-                <p className="py-4 text-center text-xs text-muted-foreground">No chats yet.</p>
+              <button
+                onClick={() => { void createChat(); setOpenPanel(null) }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent transition-colors"
+              >
+                <SquarePen className="size-3 shrink-0" />
+                <span className="font-medium">New chat</span>
+              </button>
+              {pinnedChats.length > 0 && (
+                <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs">
+                  <Pin className="size-3 shrink-0 opacity-50" />
+                  <span className="truncate text-muted-foreground">Pinned</span>
+                  <span className="ml-auto text-[10px] opacity-50">{pinnedChats.length}</span>
+                </div>
               )}
-              {recentChats.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => selectChat(s.id)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent transition-colors"
-                >
-                  <FileText className="size-2.5 shrink-0 opacity-50" />
-                  <span className="truncate font-medium">{s.title}</span>
-                  <span className="ml-auto text-[10px] opacity-50">{formatChatTime(s.updatedAt)}</span>
-                </button>
-              ))}
-            </div>
-            {/* Search */}
-            <div className="relative mt-3">
-              <Search className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search…"
-                className="h-8 w-full rounded-md border border-border bg-background pl-7 pr-2 text-xs outline-none focus-visible:border-ring"
-              />
+              <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs">
+                <FileText className="size-3 shrink-0 opacity-50" />
+                <span className="truncate text-muted-foreground">Recent</span>
+                <span className="ml-auto text-[10px] opacity-50">{recentChats.length}</span>
+              </div>
             </div>
           </FloatingPanel>
         </>
@@ -1167,12 +1142,12 @@ function ChatLayout() {
 
               {showEmptyState && (
                 <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-                  <p className="font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">Memory chat</p>
+                  <p className="font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">Recall-OS</p>
                   <span className="font-display text-3xl font-medium tracking-tight sm:text-4xl">
                     Ask your <span className="font-script text-foreground">memory</span>
                   </span>
                   <p className="max-w-md text-muted-foreground">
-                    Query documents, notes, and organizational knowledge. A new session is created when you send your first message.
+                    Query documents, notes, and organizational knowledge.
                   </p>
                 </div>
               )}
@@ -1252,7 +1227,7 @@ function ChatLayout() {
                   placeholder="Ask anything about your knowledge base…"
                   rows={1}
                   disabled={sending || loadingMessages}
-                  className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0"
+                  className="max-h-32 min-h-9 flex-1 resize-none border-0 px-2 py-2 text-sm "
                 />
 
                 <Button type="button" size="icon-sm" className="mr-0.5 shrink-0 rounded-full"
@@ -1263,8 +1238,8 @@ function ChatLayout() {
               </div>
 
               <p className="mt-1.5 text-center text-xs text-muted-foreground">
-                <Paperclip className="mr-1 inline size-3" />
-                Hybrid retrieval · RRF · cross-encoder · LLM
+                {/* <Paperclip className="mr-1 inline size-3" /> */}
+                Recall-OS can make mistakes. Check important info.
               </p>
             </div>
           </div>
