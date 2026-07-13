@@ -110,10 +110,10 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
     return chunks;
 }
 
-function buildSystemPrompt(
+async function buildSystemPrompt(
     contextChunks: { text: string; id: string }[],
     projectSystemPrompt?: string | null
-): string {
+): Promise<string> {
     console.log(`[buildSystemPrompt] Building prompt with ${contextChunks.length} context chunks`);
     const context = contextChunks
         .map((c, i) => `[${i + 1}] (id: ${c.id})\n${c.text}`)
@@ -431,7 +431,7 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
-            { role: "system" as const, content: buildSystemPrompt(topChunks, projectSystemPrompt) },
+            { role: "system" as const, content: await buildSystemPrompt(topChunks, projectSystemPrompt) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
                 content: m.content,
