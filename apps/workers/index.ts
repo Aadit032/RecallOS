@@ -183,14 +183,17 @@ async function upsertChunks(chunks: Chunk[], documentId: string): Promise<Boolea
         // console.log("sparseVectors", sparseVectors);
         // console.log("embeddings", embeddings);
 
-        console.log("checking vector format before upsert: ", JSON.stringify(sparseVectors[0], null, 2));
+        console.dir(sparseVectors[0], { depth: null });
         console.log("checking embedding size before upsert: ", embeddings[0]!.length);
 
         const points = chunks.map((chunk, i) => ({
             id: uuidv4(),
             vector: {
-                dense: embeddings[i],
-                splade: sparseVectors[i],
+                dense: Array.from(embeddings[i]!),
+                splade: {
+                    indices: Array.from(sparseVectors[i]!.indices),
+                    values: Array.from(sparseVectors[i]!.values),
+                },
             },
             payload: {
                 text: chunk.text,
@@ -199,13 +202,26 @@ async function upsertChunks(chunks: Chunk[], documentId: string): Promise<Boolea
             }
         }));
 
-        console.log("points", points);
+        console.log(points[0], { depth: null });
 
         await qdrantClient.upsert(COLLECTION, { wait: true, points });
         console.log("points have been upserted to qdrant!!")
         return true;
-    }catch(e){
-        console.log("Error upserting chunks: ", e);
+    }catch (e: any) {
+        console.dir(e, { depth: null });
+
+        console.log("====== RESPONSE ======");
+        console.dir(e.response, { depth: null });
+
+        console.log("====== DATA ======");
+        console.dir(e.response?.data, { depth: null });
+
+        console.log("====== BODY ======");
+        console.dir(e.response?.body, { depth: null });
+
+        console.log("====== STATUS ======");
+        console.dir(e.data?.status, { depth: null });
+
         return false;
     }
 }
