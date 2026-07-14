@@ -567,67 +567,33 @@ chatRouter.post("/message", async (req, res) => {
         ];
         console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}, userAgent=${Boolean(userAgent)}`);
 
-        // 6. LLM call via OpenRouter
-        console.log(`[POST /message] Step 6 — Calling OpenRouter model=${CHAT_MODEL}`);
-        const startTime = Date.now();
-        const llmResponse = await openrouterClient.chat.send({
-            chatRequest: {
-                model: CHAT_MODEL,
-                messages: llmMessages,
-            },
-        });
-        const llmDuration = Date.now() - startTime;
-        console.log(`[POST /message] OpenRouter response received in ${llmDuration}ms`);
-
-        const assistantText =
-            (typeof llmResponse?.choices?.[0]?.message?.content === "string"
-                ? llmResponse.choices[0].message.content
-                : null) ??
-            "I couldn't generate a response. Please try again.";
-
-        console.log(`[POST /message] Assistant text length: ${assistantText.length} chars, finish_reason: ${JSON.stringify(llmResponse?.choices?.[0]?.finishReason ?? "unknown")}`);
-
-        console.log(`[POST /message] Persisting assistant message in chat ${chat.id}`);
-        const assistantMessage = await prismaClient.message.create({
-            data: {
-                chatId: chat.id,
-                role: "assistant",
-                content: assistantText,
-                sourceChunks: topChunks.map((c, i) => ({
-                    rank: i + 1,
-                    id: c.id,
-                    score: c.score,
-                    text: c.text.slice(0, 400),
-                })),
-            },
-        });
-        console.log(`[POST /message] Assistant message persisted: id=${assistantMessage.id}`);
-
-        // Bump updatedAt; set title on first message of an existing empty-titled chat
+        // 6. Stream LLM reply via OpenRouter → SSE to the client
         const shouldSetTitle = isNewSession || chat.title === "New chat";
-        console.log(`[POST /message] Bumping updatedAt (setTitle=${shouldSetTitle})`);
-        const msgs = await prismaClient.chat.update({
-            where: { id: chat.id },
-            data: {
-                updatedAt: new Date(),
-                ...(shouldSetTitle
-                    ? { title: titleFromMessage(message) }
-                    : {}),
-            },
-            select: { lastSummaryCount: true, summary: true }
-        });
+        const title = shouldSetTitle ? titleFromMessage(message) : chat.title;
+        const sources = topChunks.map((c, i) => ({
+            rank: i + 1,
+            id: c.id,
+            score: c.score,
+            text: c.text.slice(0, 400),
+        }));
 
-        const messagesToSummarize = await prismaClient.message.findMany({
-            where: { chatId: chat.id },
-            orderBy: { createdAt: "asc" },
-            skip: msgs.lastSummaryCount 
-        })
+        const writeSse = (payload: Record<string, unknown>) => {
+            if (res.writableEnded) return;
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        };
 
-        
-        console.log(`[POST /message] Sending 200 response — chatId=${chat.id}, isNewSession=${isNewSession}, sources=${topChunks.length}`);
-        res.status(200).json({
+        res.status(200);
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        // Hint Node/Express not to buffer the stream
+        res.flushHeaders?.();
+
+        writeSse({
+            type: "meta",
             chatId: chat.id,
-            title: shouldSetTitle ? titleFromMessage(message) : chat.title,
+            title,
             isNewSession,
             userMessage: {
                 id: userMessage.id,
@@ -635,32 +601,157 @@ chatRouter.post("/message", async (req, res) => {
                 content: userMessage.content,
                 createdAt: userMessage.createdAt,
             },
-            assistantMessage: {
-                id: assistantMessage.id,
-                role: assistantMessage.role,
-                content: assistantMessage.content,
-                createdAt: assistantMessage.createdAt,
-            },
-            sources: topChunks.map((c, i) => ({
-                rank: i + 1,
-                id: c.id,
-                score: c.score,
-                text: c.text.slice(0, 400),
-            })),
+            sources,
         });
-        console.log(`[POST /message] Done — total pipeline completed`);
-        let N = 100;
-        if(messagesToSummarize.length >= N){
-            const isFirst = msgs.lastSummaryCount === 0;
-            const summary = await summarizeChat(msgs.summary, messagesToSummarize, isFirst);
 
-            await prismaClient.chat.update({
-                where: { userId, id: chat.id },
-                data: { summary, lastSummaryCount: msgs.lastSummaryCount + messagesToSummarize.length }
+        let clientClosed = false;
+        req.on("close", () => {
+            clientClosed = true;
+            console.log(`[POST /message] Client disconnected mid-stream for chat ${chat.id}`);
+        });
+
+        console.log(`[POST /message] Step 6 — Streaming OpenRouter model=${CHAT_MODEL}`);
+        const startTime = Date.now();
+        let assistantText = "";
+
+        let streamFailed = false;
+        try {
+            const llmStream = await openrouterClient.chat.send({
+                chatRequest: {
+                    model: CHAT_MODEL,
+                    messages: llmMessages,
+                    stream: true,
+                },
             });
+
+            for await (const chunk of llmStream) {
+                if (clientClosed) break;
+
+                if (chunk.error) {
+                    throw new Error(chunk.error.message || "OpenRouter stream error");
+                }
+
+                const delta = chunk.choices?.[0]?.delta?.content;
+                if (typeof delta === "string" && delta.length > 0) {
+                    assistantText += delta;
+                    writeSse({ type: "delta", content: delta });
+                }
+            }
+        } catch (streamErr) {
+            streamFailed = true;
+            console.error(`[POST /message] OpenRouter stream error:`, streamErr);
+            if (!clientClosed && !res.writableEnded) {
+                writeSse({
+                    type: "error",
+                    message:
+                        streamErr instanceof Error
+                            ? streamErr.message
+                            : "Failed to stream model response",
+                });
+            }
+        }
+
+        const llmDuration = Date.now() - startTime;
+        console.log(
+            `[POST /message] OpenRouter stream finished in ${llmDuration}ms, ${assistantText.length} chars, clientClosed=${clientClosed}, streamFailed=${streamFailed}`
+        );
+
+        // Persist whatever we got (including partial) unless the model returned nothing
+        if (!assistantText.trim()) {
+            if (streamFailed) {
+                if (!res.writableEnded) res.end();
+                return;
+            }
+            assistantText = "I couldn't generate a response. Please try again.";
+            if (!clientClosed && !res.writableEnded) {
+                writeSse({ type: "delta", content: assistantText });
+            }
+        }
+
+        console.log(`[POST /message] Persisting assistant message in chat ${chat.id}`);
+        const assistantMessage = await prismaClient.message.create({
+            data: {
+                chatId: chat.id,
+                role: "assistant",
+                content: assistantText,
+                sourceChunks: sources,
+            },
+        });
+        console.log(`[POST /message] Assistant message persisted: id=${assistantMessage.id}`);
+
+        console.log(`[POST /message] Bumping updatedAt (setTitle=${shouldSetTitle})`);
+        const msgs = await prismaClient.chat.update({
+            where: { id: chat.id },
+            data: {
+                updatedAt: new Date(),
+                ...(shouldSetTitle ? { title } : {}),
+            },
+            select: { lastSummaryCount: true, summary: true },
+        });
+
+        if (!clientClosed && !res.writableEnded && !streamFailed) {
+            writeSse({
+                type: "done",
+                chatId: chat.id,
+                title,
+                isNewSession,
+                userMessage: {
+                    id: userMessage.id,
+                    role: userMessage.role,
+                    content: userMessage.content,
+                    createdAt: userMessage.createdAt,
+                },
+                assistantMessage: {
+                    id: assistantMessage.id,
+                    role: assistantMessage.role,
+                    content: assistantMessage.content,
+                    createdAt: assistantMessage.createdAt,
+                },
+                sources,
+            });
+        }
+        if (!res.writableEnded) res.end();
+        console.log(`[POST /message] Done — stream completed for chat ${chat.id}`);
+
+        // Summarize in the background after the client has the full answer
+        if (streamFailed) return;
+        try {
+            const messagesToSummarize = await prismaClient.message.findMany({
+                where: { chatId: chat.id },
+                orderBy: { createdAt: "asc" },
+                skip: msgs.lastSummaryCount,
+            });
+
+            const N = 100;
+            if (messagesToSummarize.length >= N) {
+                const isFirst = msgs.lastSummaryCount === 0;
+                const summary = await summarizeChat(msgs.summary, messagesToSummarize, isFirst);
+
+                await prismaClient.chat.update({
+                    where: { userId, id: chat.id },
+                    data: {
+                        summary,
+                        lastSummaryCount: msgs.lastSummaryCount + messagesToSummarize.length,
+                    },
+                });
+            }
+        } catch (summaryErr) {
+            console.error(`[POST /message] Summary update failed:`, summaryErr);
         }
     } catch (e) {
         console.error(`[POST /message] Pipeline error:`, e);
+        if (res.headersSent) {
+            if (!res.writableEnded) {
+                res.write(
+                    `data: ${JSON.stringify({
+                        type: "error",
+                        message: e instanceof Error ? e.message : "Failed to process chat message",
+                    })}\n\n`
+                );
+                res.end();
+            }
+            return;
+        }
         res.status(500).json({
             message: "Failed to process chat message",
             error: e instanceof Error ? e.message : e,

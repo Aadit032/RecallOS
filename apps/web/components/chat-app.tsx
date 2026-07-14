@@ -548,9 +548,16 @@ function ChatLayout() {
       return map
    }, [sessions, query])
 
+   const lastAssistantContent =
+      active?.messages.filter((m) => m.role === "assistant").at(-1)?.content ?? ""
+
    useEffect(() => {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-   }, [active?.messages.length, activeId, sending])
+      // Instant while tokens stream; smooth for normal chat switches
+      bottomRef.current?.scrollIntoView({
+         behavior: sending ? "auto" : "smooth",
+         block: "end",
+      })
+   }, [active?.messages.length, activeId, sending, lastAssistantContent])
 
    // Floating pickers only apply while the icon rail is collapsed
    useEffect(() => {
@@ -679,7 +686,28 @@ function ChatLayout() {
       }
    }
 
-   /* ── Send message ─────────────────────────────────────────── */
+   /* ── Send message (SSE stream from OpenRouter) ────────────── */
+
+   type StreamEvent =
+      | {
+           type: "meta"
+           chatId: string
+           title: string
+           isNewSession: boolean
+           userMessage: { id: string; role: string; content: string; createdAt: string }
+           sources: SourceChunk[]
+        }
+      | { type: "delta"; content: string }
+      | {
+           type: "done"
+           chatId: string
+           title: string
+           isNewSession: boolean
+           userMessage: { id: string; role: string; content: string; createdAt: string }
+           assistantMessage: { id: string; role: string; content: string; createdAt: string }
+           sources: SourceChunk[]
+        }
+      | { type: "error"; message: string }
 
    const sendMessage = async () => {
       const text = draft.trim()
@@ -695,7 +723,18 @@ function ChatLayout() {
 
       const content = text + docInfo
       const tempUserId = `temp-user-${crypto.randomUUID()}`
+      const tempAssistantId = `temp-assistant-${crypto.randomUUID()}`
+      const sessionKeyRef = { current: active.id }
+      // Track live IDs so cancel still works after meta/done replace temp IDs
+      const liveUserIdRef = { current: tempUserId }
+      const liveAssistantIdRef = { current: tempAssistantId }
       const optimisticUser: Message = { id: tempUserId, role: "user", content, createdAt: new Date().toISOString() }
+      const optimisticAssistant: Message = {
+         id: tempAssistantId,
+         role: "assistant",
+         content: "",
+         createdAt: new Date().toISOString(),
+      }
 
       setSessions((prev) =>
          prev.map((s) => {
@@ -703,8 +742,10 @@ function ChatLayout() {
             return {
                ...s,
                title: s.title === "New chat" && s.messages.length === 0 ? text.slice(0, 48) + (text.length > 48 ? "…" : "") : s.title,
-               updatedAt: new Date().toISOString(), messages: [...s.messages, optimisticUser],
-               messageCount: s.messageCount + 1, messagesLoaded: true,
+               updatedAt: new Date().toISOString(),
+               messages: [...s.messages, optimisticUser, optimisticAssistant],
+               messageCount: s.messageCount + 2,
+               messagesLoaded: true,
             }
          })
       )
@@ -715,6 +756,23 @@ function ChatLayout() {
       const controller = new AbortController()
       abortRef.current = controller
 
+      const rollbackOptimistic = () => {
+         const userId = liveUserIdRef.current
+         const assistantId = liveAssistantIdRef.current
+         setSessions((prev) =>
+            prev.map((s) => {
+               if (s.id !== sessionKeyRef.current && s.id !== active.id) return s
+               const nextMessages = s.messages.filter((m) => m.id !== userId && m.id !== assistantId)
+               return {
+                  ...s,
+                  messages: nextMessages,
+                  messageCount: nextMessages.length,
+               }
+            })
+         )
+         setDraft(text)
+      }
+
       try {
          // userAgent goes into the system prompt on the server — not the stored user message
          const body: { message: string; chatId?: string; userAgent?: string } = {
@@ -723,42 +781,210 @@ function ChatLayout() {
          }
          if (active.id !== DRAFT_ID) body.chatId = active.id
 
-         const { data } = await axios.post(`${API_BASE_CHAT}/message`, body, {
-            headers: authHeaders(), signal: controller.signal,
+         const response = await fetch(`${API_BASE_CHAT}/message`, {
+            method: "POST",
+            headers: {
+               ...authHeaders(),
+               "Content-Type": "application/json",
+               Accept: "text/event-stream",
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
          })
 
-         const chatId: string = data.chatId
-         const userMsg: Message = { id: data.userMessage.id, role: "user", content: data.userMessage.content, createdAt: data.userMessage.createdAt }
-         const assistantMsg: Message = { id: data.assistantMessage.id, role: "assistant", content: data.assistantMessage.content, createdAt: data.assistantMessage.createdAt, sourceChunks: data.sources ?? [] }
-
-         setSessions((prev) => {
-            const rest = prev.filter((s) => s.id !== active.id && s.id !== chatId)
-            const prior = prev.find((s) => s.id === active.id) ?? prev.find((s) => s.id === chatId)
-            const priorWithoutTemp = (prior?.messages ?? []).filter((m) => m.id !== tempUserId)
-            const messages = [...priorWithoutTemp, userMsg, assistantMsg]
-            const updated: ChatSession = {
-               id: chatId, title: data.title ?? prior?.title ?? "Chat", pinned: prior?.pinned ?? false,
-               projectId: prior?.projectId ?? null, projectName: prior?.projectName ?? null,
-               updatedAt: new Date().toISOString(), messages, messageCount: messages.length, messagesLoaded: true,
+         if (!response.ok) {
+            let message = "Failed to send message"
+            try {
+               const errBody = await response.json()
+               if (typeof errBody?.message === "string") message = errBody.message
+            } catch {
+               /* ignore non-JSON error bodies */
             }
-            const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
-            return needsDraft ? [emptyDraft(), updated, ...rest] : [updated, ...rest]
-         })
-         setActiveId(chatId)
+            throw new Error(message)
+         }
+
+         if (!response.body) {
+            throw new Error("No response body from server")
+         }
+
+         const reader = response.body.getReader()
+         const decoder = new TextDecoder()
+         let buffer = ""
+         let streamedContent = ""
+         let finished = false
+
+         const applyMeta = (event: Extract<StreamEvent, { type: "meta" }>) => {
+            const chatId = event.chatId
+            const prevUserId = liveUserIdRef.current
+            const prevAssistantId = liveAssistantIdRef.current
+            liveUserIdRef.current = event.userMessage.id
+            const userMsg: Message = {
+               id: event.userMessage.id,
+               role: "user",
+               content: event.userMessage.content,
+               createdAt:
+                  typeof event.userMessage.createdAt === "string"
+                     ? event.userMessage.createdAt
+                     : new Date(event.userMessage.createdAt).toISOString(),
+            }
+
+            setSessions((prev) => {
+               const prior =
+                  prev.find((s) => s.id === sessionKeyRef.current) ??
+                  prev.find((s) => s.id === chatId) ??
+                  prev.find((s) => s.id === active.id)
+               const rest = prev.filter(
+                  (s) => s.id !== sessionKeyRef.current && s.id !== chatId && s.id !== active.id
+               )
+               const kept = (prior?.messages ?? []).filter(
+                  (m) => m.id !== prevUserId && m.id !== prevAssistantId
+               )
+               const assistant: Message = {
+                  id: prevAssistantId,
+                  role: "assistant",
+                  content: streamedContent,
+                  createdAt: new Date().toISOString(),
+                  sourceChunks: event.sources ?? [],
+               }
+               const updated: ChatSession = {
+                  id: chatId,
+                  title: event.title ?? prior?.title ?? "Chat",
+                  pinned: prior?.pinned ?? false,
+                  projectId: prior?.projectId ?? null,
+                  projectName: prior?.projectName ?? null,
+                  updatedAt: new Date().toISOString(),
+                  messages: [...kept, userMsg, assistant],
+                  messageCount: kept.length + 2,
+                  messagesLoaded: true,
+               }
+               const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
+               return needsDraft ? [emptyDraft(), updated, ...rest] : [updated, ...rest]
+            })
+            sessionKeyRef.current = chatId
+            setActiveId(chatId)
+         }
+
+         const applyDelta = (delta: string) => {
+            streamedContent += delta
+            const sessionId = sessionKeyRef.current
+            const assistantId = liveAssistantIdRef.current
+            setSessions((prev) =>
+               prev.map((s) => {
+                  if (s.id !== sessionId) return s
+                  return {
+                     ...s,
+                     messages: s.messages.map((m) =>
+                        m.id === assistantId ? { ...m, content: streamedContent } : m
+                     ),
+                  }
+               })
+            )
+         }
+
+         const applyDone = (event: Extract<StreamEvent, { type: "done" }>) => {
+            const chatId = event.chatId
+            const prevUserId = liveUserIdRef.current
+            const prevAssistantId = liveAssistantIdRef.current
+            liveUserIdRef.current = event.userMessage.id
+            liveAssistantIdRef.current = event.assistantMessage.id
+            const userMsg: Message = {
+               id: event.userMessage.id,
+               role: "user",
+               content: event.userMessage.content,
+               createdAt:
+                  typeof event.userMessage.createdAt === "string"
+                     ? event.userMessage.createdAt
+                     : new Date(event.userMessage.createdAt).toISOString(),
+            }
+            const assistantMsg: Message = {
+               id: event.assistantMessage.id,
+               role: "assistant",
+               content: event.assistantMessage.content,
+               createdAt:
+                  typeof event.assistantMessage.createdAt === "string"
+                     ? event.assistantMessage.createdAt
+                     : new Date(event.assistantMessage.createdAt).toISOString(),
+               sourceChunks: event.sources ?? [],
+            }
+
+            setSessions((prev) => {
+               const prior =
+                  prev.find((s) => s.id === sessionKeyRef.current) ??
+                  prev.find((s) => s.id === chatId) ??
+                  prev.find((s) => s.id === active.id)
+               const rest = prev.filter(
+                  (s) => s.id !== sessionKeyRef.current && s.id !== chatId && s.id !== active.id
+               )
+               const kept = (prior?.messages ?? []).filter(
+                  (m) =>
+                     m.id !== prevUserId &&
+                     m.id !== prevAssistantId &&
+                     m.id !== userMsg.id &&
+                     m.id !== assistantMsg.id
+               )
+               const updated: ChatSession = {
+                  id: chatId,
+                  title: event.title ?? prior?.title ?? "Chat",
+                  pinned: prior?.pinned ?? false,
+                  projectId: prior?.projectId ?? null,
+                  projectName: prior?.projectName ?? null,
+                  updatedAt: new Date().toISOString(),
+                  messages: [...kept, userMsg, assistantMsg],
+                  messageCount: kept.length + 2,
+                  messagesLoaded: true,
+               }
+               const needsDraft = !rest.some((s) => s.id === DRAFT_ID)
+               return needsDraft ? [emptyDraft(), updated, ...rest] : [updated, ...rest]
+            })
+            sessionKeyRef.current = chatId
+            setActiveId(chatId)
+            finished = true
+         }
+
+         const handleEvent = (event: StreamEvent) => {
+            if (event.type === "meta") applyMeta(event)
+            else if (event.type === "delta") applyDelta(event.content)
+            else if (event.type === "done") applyDone(event)
+            else if (event.type === "error") throw new Error(event.message || "Stream error")
+         }
+
+         while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+
+            // SSE events are separated by blank lines
+            let sep: number
+            while ((sep = buffer.indexOf("\n\n")) !== -1) {
+               const rawEvent = buffer.slice(0, sep)
+               buffer = buffer.slice(sep + 2)
+               const dataLines = rawEvent
+                  .split("\n")
+                  .filter((line) => line.startsWith("data:"))
+                  .map((line) => line.slice(5).trimStart())
+               if (dataLines.length === 0) continue
+               const data = dataLines.join("\n")
+               if (!data || data === "[DONE]") continue
+               let parsed: StreamEvent
+               try {
+                  parsed = JSON.parse(data) as StreamEvent
+               } catch {
+                  console.warn("[chat:sendMessage] Bad SSE payload:", data)
+                  continue
+               }
+               handleEvent(parsed)
+            }
+         }
+
+         if (!finished && streamedContent.length === 0) {
+            throw new Error("Stream ended without a response")
+         }
       } catch (e) {
-         if (axios.isCancel(e)) {
-            setSessions((prev) => prev.map((s) => {
-               if (s.id !== active.id) return s
-               return { ...s, messages: s.messages.filter((m) => m.id !== tempUserId), messageCount: Math.max(0, s.messageCount - 1) }
-            }))
-            setDraft(text)
+         if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
+            rollbackOptimistic()
          } else {
-            setError(axios.isAxiosError(e) ? (e.response?.data?.message as string) || e.message : "Failed to send message")
-            setSessions((prev) => prev.map((s) => {
-               if (s.id !== active.id) return s
-               return { ...s, messages: s.messages.filter((m) => m.id !== tempUserId), messageCount: Math.max(0, s.messageCount - 1) }
-            }))
-            setDraft(text)
+            setError(e instanceof Error ? e.message : "Failed to send message")
+            rollbackOptimistic()
          }
       } finally {
          setSending(false)
@@ -1391,14 +1617,29 @@ function ChatLayout() {
                         </div>
                      )}
 
-                     {!loadingMessages && active?.messages.map((message) =>
-                        message.role === "user" ? (
-                           <div key={message.id} className="flex w-full justify-end">
-                              <div className="max-w-[85%] rounded-2xl bg-secondary px-4 py-3 text-foreground sm:max-w-[75%]">
-                                 <ExpandableMessage content={message.content} />
+                     {!loadingMessages && active?.messages.map((message) => {
+                        if (message.role === "user") {
+                           return (
+                              <div key={message.id} className="flex w-full justify-end">
+                                 <div className="max-w-[85%] rounded-2xl bg-secondary px-4 py-3 text-foreground sm:max-w-[75%]">
+                                    <ExpandableMessage content={message.content} />
+                                 </div>
                               </div>
-                           </div>
-                        ) : (
+                           )
+                        }
+
+                        const isStreamingBubble =
+                           sending &&
+                           message.id.startsWith("temp-assistant-") &&
+                           message.content.length === 0
+
+                        // Hide empty assistant placeholder while retrieval is still running
+                        if (isStreamingBubble) return null
+
+                        const isLiveStream =
+                           sending && message.id.startsWith("temp-assistant-") && message.content.length > 0
+
+                        return (
                            <div key={message.id} className="w-full space-y-2 text-foreground">
                               <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">RecallOS</p>
                               <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -1414,8 +1655,11 @@ function ChatLayout() {
                                        }
                                        : undefined}
                                  />
+                                 {isLiveStream && (
+                                    <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-foreground/70 align-text-bottom" aria-hidden />
+                                 )}
                               </div>
-                              {message.sourceChunks && message.sourceChunks.length > 0 && (
+                              {!sending && message.sourceChunks && message.sourceChunks.length > 0 && (
                                  <button
                                     onClick={() => setOpenSourceMsgId(openSourceMsgId === message.id ? null : message.id)}
                                     className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -1426,12 +1670,16 @@ function ChatLayout() {
                               )}
                            </div>
                         )
-                     )}
+                     })}
 
                      {sending && (
                         <div className="flex items-center gap-3 text-sm text-muted-foreground">
                            <Loader2 className="size-4 animate-spin" />
-                           Searching memory and generating a reply…
+                           {(active?.messages.some(
+                              (m) => m.role === "assistant" && m.id.startsWith("temp-assistant-") && m.content.length > 0
+                           )
+                              ? "Streaming reply…"
+                              : "Searching memory and generating a reply…")}
                            <button onClick={cancelSending} className="text-xs font-medium text-destructive hover:underline">Cancel</button>
                         </div>
                      )}
