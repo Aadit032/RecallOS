@@ -13,6 +13,8 @@ export const signinSchema = z.object({
 export const messageSchema = z.object({
     message: z.string().min(1).max(8000),
     chatId: z.string().uuid().optional(),
+    /** Browser user-agent — injected into the system prompt, not stored as user text */
+    userAgent: z.string().max(1000).optional(),
 });
 
 export const bodySchema = z.object({

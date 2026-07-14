@@ -103,8 +103,6 @@ export default function Dashboard() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [status, setStatus] = useState("")
-  const [documentId, setDocumentId] = useState<string | null>(null)
-  const [uploadKey, setUploadKey] = useState<string | null>(null)
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState("")
@@ -158,8 +156,6 @@ export default function Dashboard() {
   const clearFile = () => {
     setFile(null)
     setStatus("")
-    setDocumentId(null)
-    setUploadKey(null)
   }
 
   const handleUpload = async () => {
@@ -185,7 +181,6 @@ export default function Dashboard() {
           },
         }
       )
-      setUploadKey(key)
       console.log(`[dashboard:handleUpload] Got presigned URL and key="${key}"`);
 
       setStatus("Uploading file…")
@@ -211,8 +206,8 @@ export default function Dashboard() {
             },
           }
         )
-        setDocumentId(data.documentId)
         console.log(`[dashboard:handleUpload] Upload confirmed: documentId=${data.documentId}`);
+        setFile(null)
         setStatus("Upload complete.")
         void fetchDocuments()
       } else {
@@ -232,17 +227,12 @@ export default function Dashboard() {
     if (nextCursor && !loadingMore) void fetchDocuments(nextCursor)
   }, [nextCursor, loadingMore, fetchDocuments])
 
-  const handleDownload = async (key?: string) => {
-    const targetKey = key ?? uploadKey
-    if (!targetKey) {
-      console.log(`[dashboard:handleDownload] No key available`);
-      return;
-    }
-    console.log(`[dashboard:handleDownload] Getting download URL for key="${targetKey}"`);
+  const handleDownload = async (key: string) => {
+    console.log(`[dashboard:handleDownload] Getting download URL for key="${key}"`);
     const token = localStorage.getItem("token")
     const { data } = await axios.post(
       `${API_BASE_DOWNLOAD}/get-download-url`,
-      { key: targetKey },
+      { key },
       {
         headers: {
           Authorization: "Bearer " + token,
@@ -264,10 +254,6 @@ export default function Dashboard() {
         headers: { Authorization: "Bearer " + token },
       })
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
-      if (documentId === doc.id) {
-        setDocumentId(null)
-        setUploadKey(null)
-      }
       console.log(`[dashboard:handleDeleteDocument] Deleted documentId=${doc.id}`);
     } catch (e) {
       console.error(`[dashboard:handleDeleteDocument] Error:`, e)
@@ -433,17 +419,6 @@ export default function Dashboard() {
                   </>
                 )}
               </Button>
-
-              {documentId && (
-                <Button
-                  variant="outline"
-                  onClick={() => handleDownload()}
-                  className="h-11 px-6 text-base"
-                >
-                  <Download className="size-4" />
-                  Download file
-                </Button>
-              )}
             </div>
 
             {status && (
@@ -460,11 +435,6 @@ export default function Dashboard() {
                 >
                   {status}
                 </p>
-                {documentId && (
-                  <p className="font-mono text-xs text-muted-foreground">
-                    documentId: {documentId}
-                  </p>
-                )}
               </div>
             )}
           </section>

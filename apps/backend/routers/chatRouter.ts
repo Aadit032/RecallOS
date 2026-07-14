@@ -115,7 +115,8 @@ async function buildSystemPrompt(
     userId: string,
     chatId: string,
     contextChunks: { text: string; id: string }[],
-    projectSystemPrompt?: string | null
+    projectSystemPrompt?: string | null,
+    userAgent?: string | null
 ): Promise<string> {
     console.log(`[buildSystemPrompt] Building prompt with ${contextChunks.length} context chunks`);
     const context = contextChunks
@@ -128,7 +129,12 @@ async function buildSystemPrompt(
     const projectBlock =
         projectSystemPrompt && projectSystemPrompt.trim().length > 0
             ? `\n\nAdditional project instructions:\n${projectSystemPrompt.trim()}\n`
-            : "";   
+            : "";
+
+    const deviceBlock =
+        userAgent && userAgent.trim().length > 0
+            ? `\n\nClient device / browser (from User-Agent; use only when relevant to the answer, e.g. OS- or browser-specific guidance):\n${userAgent.trim()}\n`
+            : "";
 
     const responses = await prismaClient.chat.findMany({
         where: { userId, id: { not: chatId }, summary: { not: null } },
@@ -151,7 +157,7 @@ async function buildSystemPrompt(
         Recent conversation summaries: 
         ${finalSummary || "None"} 
         
-        ${projectBlock}
+        ${projectBlock}${deviceBlock}
 
         Context chunks:
         ${context || "(No relevant chunks found.)"}`;
@@ -481,8 +487,8 @@ chatRouter.post("/message", async (req, res) => {
         return;
     }
 
-    const { message, chatId } = parsed.data;
-    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}`);
+    const { message, chatId, userAgent } = parsed.data;
+    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}`);
 
     try {
         // 1. Resolve or create chat session (session is created on first message)
@@ -553,13 +559,13 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
-            { role: "system" as const, content: await buildSystemPrompt(userId, chat.id, topChunks, projectSystemPrompt) },
+            { role: "system" as const, content: await buildSystemPrompt(userId, chat.id, topChunks, projectSystemPrompt, userAgent) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
                 content: m.content,
             })),
         ];
-        console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}`);
+        console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}, userAgent=${Boolean(userAgent)}`);
 
         // 6. LLM call via OpenRouter
         console.log(`[POST /message] Step 6 — Calling OpenRouter model=${CHAT_MODEL}`);
