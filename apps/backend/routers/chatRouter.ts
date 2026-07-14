@@ -6,6 +6,7 @@ import { getDenseVectors, getSparseVectors, crossEncodeRerank } from "@repo/embe
 import { openrouterClient } from "@repo/openrouter/client";
 import { messageSchema, bodySchema } from "../types"
 import dotenv from "dotenv";
+import type { JsonValue } from "../../../packages/db/generated/prisma/internal/prismaNamespace";
 
 dotenv.config();
 
@@ -361,6 +362,108 @@ chatRouter.delete("/:id", async (req, res) => {
  * Send a message. Creates a new chat session on the first message when chatId is omitted.
  * Pipeline: embed → dense+sparse top-50 → RRF top-50 → cross-encoder top-5 → LLM.
  */
+
+interface Message {
+    id: string
+    role: string
+    content: string
+    sourceChunks: JsonValue
+    createdAt: Date
+}
+
+async function summarizeChat(currentSummary: string | null, messages: Message[], isFirst: boolean): Promise<string>{
+    let chatHistory: string = ""
+    for (const m of messages){
+        chatHistory += `role: ${m.role}\n` + `\ncontent: ${m.content}\n\n`;
+    }
+
+    const summaryPrompt = isFirst ? `You are summarizing a conversation for future AI context.
+        Your goal is to produce a concise summary that helps another AI continue the conversation without reading the full transcript.
+
+        Include only information that is likely to matter in future conversations:
+        - The user's goals, plans, and ongoing projects.
+        - Important decisions that were made.
+        - Important facts the user shared during this conversation.
+        - Constraints, requirements, and preferences relevant to this chat.
+        - Any unresolved questions, TODOs, or next steps.
+
+        Do NOT include:
+        - Greetings or small talk.
+        - Repeated questions or repeated explanations.
+        - Intermediate brainstorming that was later discarded.
+        - Details that are obvious from the final conclusions.
+
+        Keep the summary factual and objective.
+        Do not invent information or make assumptions.
+        Write in third person.
+        Prefer short paragraphs or bullet points.
+        Maximum 300 words.
+
+        Conversation:
+        ${chatHistory}
+    `
+    : `Summarize this section of a larger conversation.
+        Capture only information that should survive into the final conversation summary.
+        
+        Focus on:
+        - Decisions made
+        - Important facts
+        - Technical designs
+        - User goals
+        - Open questions
+        
+        Avoid repeating information already stated within this section.
+        
+        Maximum 150 words.
+        
+        Conversation chunk:
+        ${chatHistory}
+    `
+
+    const response = await openrouterClient.chat.send({
+        chatRequest: {
+            messages: [{role: "user", content: summaryPrompt}]
+        }
+    });
+
+    const summary = response.choices[0]?.message.content;
+
+    if(!isFirst){
+        const mergePrompt = `The following are summaries of different sections of the same conversation.
+            
+            Merge them into one coherent summary.
+            
+            Requirements:
+            - Remove duplicate information.
+            - Preserve important chronology where useful.
+            - Keep only durable information.
+            - Include final decisions rather than intermediate alternatives.
+            - Include unresolved tasks or follow-ups.
+            - Do not invent new information.
+            
+            Return only the final summary.
+            Maximum 300 words.
+            
+            previous summary:
+            ${currentSummary}
+
+            latest summary:
+            ${summary}
+        `
+
+        const mergedSummary = await openrouterClient.chat.send({
+            chatRequest: {
+                messages: [{role: "user", content: mergePrompt}]
+            }
+        });
+
+        return mergedSummary.choices[0]?.message.content;
+    }
+
+    return summary;
+}
+
+
 chatRouter.post("/message", async (req, res) => {
     const userId = req.userId;
     console.log(`[POST /message] Entry — userId=${userId}`);
@@ -440,14 +543,12 @@ chatRouter.post("/message", async (req, res) => {
 
         // 5. Load prior messages for multi-turn context
         console.log(`[POST /message] Step 5 — Loading history (last 20 messages)`);
-        
         const history = 
         (await prismaClient.message.findMany({
             where: { chatId: chat.id },
             orderBy: { createdAt: "desc" },
             take: 20,
         })).reverse();
-
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
@@ -498,7 +599,7 @@ chatRouter.post("/message", async (req, res) => {
         // Bump updatedAt; set title on first message of an existing empty-titled chat
         const shouldSetTitle = isNewSession || chat.title === "New chat";
         console.log(`[POST /message] Bumping updatedAt (setTitle=${shouldSetTitle})`);
-        await prismaClient.chat.update({
+        const msgs = await prismaClient.chat.update({
             where: { id: chat.id },
             data: {
                 updatedAt: new Date(),
@@ -506,8 +607,16 @@ chatRouter.post("/message", async (req, res) => {
                     ? { title: titleFromMessage(message) }
                     : {}),
             },
+            select: { lastSummaryCount: true, summary: true }
         });
 
+        const messagesToSummarize = await prismaClient.message.findMany({
+            where: { chatId: chat.id },
+            orderBy: { createdAt: "asc" },
+            skip: msgs.lastSummaryCount 
+        })
+
+        
         console.log(`[POST /message] Sending 200 response — chatId=${chat.id}, isNewSession=${isNewSession}, sources=${topChunks.length}`);
         res.status(200).json({
             chatId: chat.id,
@@ -533,6 +642,16 @@ chatRouter.post("/message", async (req, res) => {
             })),
         });
         console.log(`[POST /message] Done — total pipeline completed`);
+        let N = 100;
+        if(messagesToSummarize.length >= N){
+            const isFirst = msgs.lastSummaryCount === 0;
+            const summary = await summarizeChat(msgs.summary, messagesToSummarize, isFirst);
+
+            await prismaClient.chat.update({
+                where: { userId, id: chat.id },
+                data: { summary, lastSummaryCount: msgs.lastSummaryCount + messagesToSummarize.length }
+            });
+        }
     } catch (e) {
         console.error(`[POST /message] Pipeline error:`, e);
         res.status(500).json({
