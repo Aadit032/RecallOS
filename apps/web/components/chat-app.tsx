@@ -992,7 +992,25 @@ function ChatLayout() {
       }
    }
 
-   const cancelSending = () => { abortRef.current?.abort() }
+   const cancelSending = useCallback(() => {
+      abortRef.current?.abort()
+   }, [])
+
+   // Ctrl+C aborts an in-flight chat request (terminal-style interrupt)
+   useEffect(() => {
+      if (!sending) return
+
+      const onGlobalKeyDown = (e: KeyboardEvent) => {
+         if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+         if (e.key !== "c" && e.key !== "C") return
+         e.preventDefault()
+         e.stopPropagation()
+         cancelSending()
+      }
+
+      window.addEventListener("keydown", onGlobalKeyDown, true)
+      return () => window.removeEventListener("keydown", onGlobalKeyDown, true)
+   }, [sending, cancelSending])
 
    const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
@@ -1680,7 +1698,14 @@ function ChatLayout() {
                            )
                               ? "Streaming reply…"
                               : "Searching memory and generating a reply…")}
-                           <button onClick={cancelSending} className="text-xs font-medium text-destructive hover:underline">Cancel</button>
+                           <button
+                              type="button"
+                              onClick={cancelSending}
+                              className="text-xs font-medium text-destructive hover:underline"
+                              title="Cancel request (Ctrl+C)"
+                           >
+                              Cancel <span className="font-mono text-[10px] opacity-80">Ctrl+C</span>
+                           </button>
                         </div>
                      )}
                      <div ref={bottomRef} className="h-px w-full shrink-0" />
