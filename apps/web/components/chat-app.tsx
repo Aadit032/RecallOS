@@ -16,6 +16,7 @@ import {
    Folder,
    FolderInput,
    FolderPlus,
+   Globe,
    Loader2,
    Mic,
    MicOff,
@@ -137,6 +138,11 @@ type ChatListItem = {
 }
 
 const DRAFT_ID = "__draft__"
+
+/** True when the composer (or a sent message) is using the /web agent. */
+function isWebSearchDraft(text: string): boolean {
+   return /^\/web(\s|$)/i.test(text.trimStart())
+}
 
 function authHeaders() {
    const token = localStorage.getItem("token")
@@ -347,6 +353,8 @@ function ChatLayout() {
    const [loadingMore, setLoadingMore] = useState(false)
    const [loadingMessages, setLoadingMessages] = useState(false)
    const [sending, setSending] = useState(false)
+   /** Live status line while a request runs (e.g. web search agent). */
+   const [sendStatus, setSendStatus] = useState("")
    const [error, setError] = useState("")
    const [nextCursor, setNextCursor] = useState<string | null>(null)
    const [hasMore, setHasMore] = useState(false)
@@ -694,15 +702,18 @@ function ChatLayout() {
            chatId: string
            title: string
            isNewSession: boolean
+           mode?: "web" | "memory"
            userMessage: { id: string; role: string; content: string; createdAt: string }
            sources: SourceChunk[]
         }
       | { type: "delta"; content: string }
+      | { type: "status"; message: string; mode?: "web" | "memory" }
       | {
            type: "done"
            chatId: string
            title: string
            isNewSession: boolean
+           mode?: "web" | "memory"
            userMessage: { id: string; role: string; content: string; createdAt: string }
            assistantMessage: { id: string; role: string; content: string; createdAt: string }
            sources: SourceChunk[]
@@ -713,6 +724,11 @@ function ChatLayout() {
       const text = draft.trim()
       if (!text || !active || sending) return
 
+      if (isWebSearchDraft(text) && !text.replace(/^\/web\s*/i, "").trim()) {
+         setError("Add a query after /web, e.g. /web latest news on AI agents")
+         return
+      }
+
       // Upload attached file first
       let docInfo = ""
       if (attachedFile) {
@@ -722,6 +738,7 @@ function ChatLayout() {
       }
 
       const content = text + docInfo
+      const usingWebAgent = isWebSearchDraft(content)
       const tempUserId = `temp-user-${crypto.randomUUID()}`
       const tempAssistantId = `temp-assistant-${crypto.randomUUID()}`
       const sessionKeyRef = { current: active.id }
@@ -751,6 +768,7 @@ function ChatLayout() {
       )
       setDraft("")
       setSending(true)
+      setSendStatus(usingWebAgent ? "Web search agent starting…" : "Searching memory and generating a reply…")
       setError("")
 
       const controller = new AbortController()
@@ -942,10 +960,19 @@ function ChatLayout() {
          }
 
          const handleEvent = (event: StreamEvent) => {
-            if (event.type === "meta") applyMeta(event)
-            else if (event.type === "delta") applyDelta(event.content)
-            else if (event.type === "done") applyDone(event)
-            else if (event.type === "error") throw new Error(event.message || "Stream error")
+            if (event.type === "meta") {
+               if (event.mode === "web") setSendStatus("Searching the web…")
+               applyMeta(event)
+            } else if (event.type === "status") {
+               setSendStatus(event.message)
+            } else if (event.type === "delta") {
+               setSendStatus(usingWebAgent ? "Streaming web answer…" : "Streaming reply…")
+               applyDelta(event.content)
+            } else if (event.type === "done") {
+               applyDone(event)
+            } else if (event.type === "error") {
+               throw new Error(event.message || "Stream error")
+            }
          }
 
          while (true) {
@@ -988,6 +1015,7 @@ function ChatLayout() {
          }
       } finally {
          setSending(false)
+         setSendStatus("")
          abortRef.current = null
       }
    }
@@ -1637,10 +1665,20 @@ function ChatLayout() {
 
                      {!loadingMessages && active?.messages.map((message) => {
                         if (message.role === "user") {
+                           const userUsedWeb = isWebSearchDraft(message.content)
+                           const displayContent = userUsedWeb
+                              ? message.content.replace(/^\/web\s*/i, "").trim() || message.content
+                              : message.content
                            return (
-                              <div key={message.id} className="flex w-full justify-end">
+                              <div key={message.id} className="flex w-full flex-col items-end gap-1.5">
+                                 {userUsedWeb && (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-foreground">
+                                       <Globe className="size-3 text-primary" />
+                                       Web search
+                                    </span>
+                                 )}
                                  <div className="max-w-[85%] rounded-2xl bg-secondary px-4 py-3 text-foreground sm:max-w-[75%]">
-                                    <ExpandableMessage content={message.content} />
+                                    <ExpandableMessage content={displayContent} />
                                  </div>
                               </div>
                            )
@@ -1691,13 +1729,25 @@ function ChatLayout() {
                      })}
 
                      {sending && (
-                        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                           {sendStatus.toLowerCase().includes("web") ? (
+                              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 font-medium text-foreground">
+                                 <Globe className="size-3.5 text-primary" />
+                                 Web search
+                              </span>
+                           ) : null}
                            <Loader2 className="size-4 animate-spin" />
-                           {(active?.messages.some(
-                              (m) => m.role === "assistant" && m.id.startsWith("temp-assistant-") && m.content.length > 0
-                           )
-                              ? "Streaming reply…"
-                              : "Searching memory and generating a reply…")}
+                           <span>
+                              {sendStatus ||
+                                 (active?.messages.some(
+                                    (m) =>
+                                       m.role === "assistant" &&
+                                       m.id.startsWith("temp-assistant-") &&
+                                       m.content.length > 0
+                                 )
+                                    ? "Streaming reply…"
+                                    : "Searching memory and generating a reply…")}
+                           </span>
                            <button
                               type="button"
                               onClick={cancelSending}
@@ -1729,7 +1779,34 @@ function ChatLayout() {
                         <p className="mb-2 text-center text-xs font-medium text-muted-foreground">Listening… (UI only)</p>
                      )}
 
-                     <div className="memory-glow flex items-center gap-1 rounded-full border border-border/80 bg-background/90 p-1.5 backdrop-blur-sm focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
+                     {/* ChatGPT-style tool chip when /web is active in the composer */}
+                     {isWebSearchDraft(draft) && !sending && (
+                        <div className="mb-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-150">
+                           <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm shadow-sm">
+                              <Globe className="size-3.5 shrink-0 text-primary" />
+                              <span className="font-medium text-foreground">Web search</span>
+                              <span className="hidden text-muted-foreground sm:inline">· agent will search the live web</span>
+                              <button
+                                 type="button"
+                                 className="ml-0.5 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                                 aria-label="Remove web search"
+                                 title="Remove /web"
+                                 onClick={() =>
+                                    setDraft((d) => d.replace(/^\/web\s*/i, ""))
+                                 }
+                              >
+                                 <X className="size-3.5" />
+                              </button>
+                           </div>
+                        </div>
+                     )}
+
+                     <div className={cn(
+                        "memory-glow flex items-center gap-1 rounded-full border bg-background/90 p-1.5 backdrop-blur-sm focus-within:ring-[3px]",
+                        isWebSearchDraft(draft)
+                           ? "border-primary/40 focus-within:border-primary focus-within:ring-primary/25"
+                           : "border-border/80 focus-within:border-ring focus-within:ring-ring/30"
+                     )}>
                         <input ref={fileRef} type="file" className="hidden" accept=".pdf,application/pdf"
                            onChange={(e) => { const f = e.target.files?.[0]; setAttachedFile(f ?? null); e.target.value = "" }}
                         />
@@ -1741,6 +1818,32 @@ function ChatLayout() {
                                  </Button>
                               </TooltipTrigger>
                               <TooltipContent>Upload a PDF</TooltipContent>
+                           </Tooltip>
+                           <Tooltip>
+                              <TooltipTrigger asChild>
+                                 <Button
+                                    type="button"
+                                    variant={isWebSearchDraft(draft) ? "secondary" : "ghost"}
+                                    size="icon-sm"
+                                    className="rounded-full"
+                                    onClick={() => {
+                                       if (isWebSearchDraft(draft)) {
+                                          setDraft((d) => d.replace(/^\/web\s*/i, ""))
+                                       } else {
+                                          setDraft((d) => {
+                                             const t = d.trimStart()
+                                             return t ? `/web ${t}` : "/web "
+                                          })
+                                       }
+                                    }}
+                                    aria-label={isWebSearchDraft(draft) ? "Disable web search" : "Enable web search"}
+                                 >
+                                    <Globe className={cn("size-4", isWebSearchDraft(draft) && "text-primary")} />
+                                 </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                 {isWebSearchDraft(draft) ? "Disable web search" : "Web search (/web)"}
+                              </TooltipContent>
                            </Tooltip>
                            <Tooltip>
                               <TooltipTrigger asChild>
@@ -1756,7 +1859,11 @@ function ChatLayout() {
                            value={draft}
                            onChange={(e) => setDraft(e.target.value)}
                            onKeyDown={onKeyDown}
-                           placeholder="Ask anything about your knowledge base…"
+                           placeholder={
+                              isWebSearchDraft(draft)
+                                 ? "Search the web… e.g. latest OpenAI announcements"
+                                 : "Ask anything about your knowledge base…  (or /web …)"
+                           }
                            rows={1}
                            disabled={sending || loadingMessages}
                            className="max-h-32 min-h-9 flex-1 resize-none border-0 px-2 py-2 text-sm "

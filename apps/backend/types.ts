@@ -32,3 +32,9 @@ export const updateProjectSchema = z.object({
     name: z.string().min(1).max(100).optional(),
     systemPrompt: z.string().max(8000).optional().nullable(),
 });
+
+export const ReasoningSchema = z.object({
+    enoughInformation: z.boolean(),
+    nextSearchQuery: z.string().default(""),
+    reasoning: z.string(),
+});

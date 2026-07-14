@@ -7,7 +7,7 @@ import { openrouterClient } from "@repo/openrouter/client";
 import { messageSchema, bodySchema } from "../types"
 import dotenv from "dotenv";
 import type { JsonValue } from "../../../packages/db/generated/prisma/internal/prismaNamespace";
-import { webGraph } from "../agents/webagent"
+import { runWebSearchAgent } from "../agents/webagent"
 
 dotenv.config();
 
@@ -471,9 +471,26 @@ async function summarizeChat(currentSummary: string | null, messages: Message[],
     return summary;
 }
 
-async function webSearchAgent(query: string): Promise<string>{
-    const response = await webGraph.invoke({ query });
-    return response.answer;
+function isWebSearchCommand(message: string): boolean {
+    return /^\/web(\s|$)/i.test(message.trimStart());
+}
+
+function stripWebPrefix(message: string): string {
+    return message.replace(/^\/web\s*/i, "").trim();
+}
+
+function beginSse(res: import("express").Response) {
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+}
+
+function writeSse(res: import("express").Response, payload: Record<string, unknown>) {
+    if (res.writableEnded) return;
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
 chatRouter.post("/message", async (req, res) => {
@@ -493,17 +510,13 @@ chatRouter.post("/message", async (req, res) => {
     }
 
     const { message, chatId, userAgent } = parsed.data;
-    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}`);
+    const webMode = isWebSearchCommand(message);
+    const webQuery = webMode ? stripWebPrefix(message) : "";
+    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}, webMode=${webMode}`);
 
-    if(message.startsWith("/web")){
-        const query = message.replace("/web", "").trim();
-
-        try{
-            const answer = await webSearchAgent(query);
-            return res.status(200).json({ message: answer });
-        }catch(e){
-            res.status(500).json({ message: "Websearch agent failed.... Error: ", e });
-        }
+    if (webMode && !webQuery) {
+        res.status(422).json({ message: "Add a query after /web, e.g. /web latest news on AI agents" });
+        return;
     }
 
     try {
@@ -524,12 +537,13 @@ chatRouter.post("/message", async (req, res) => {
         }
 
         const isNewSession = !chat;
+        const titleSeed = webMode ? webQuery : message;
         if (!chat) {
             console.log(`[POST /message] Creating new chat session for userId=${userId}`);
             chat = await prismaClient.chat.create({
                 data: {
                     userId,
-                    title: titleFromMessage(message),
+                    title: titleFromMessage(titleSeed),
                 },
                 include: { project: { select: { id: true, name: true, systemPrompt: true } } },
             });
@@ -550,6 +564,136 @@ chatRouter.post("/message", async (req, res) => {
         });
         console.log(`[POST /message] User message persisted: id=${userMessage.id}`);
 
+        const shouldSetTitle = isNewSession || chat.title === "New chat";
+        const title = shouldSetTitle ? titleFromMessage(titleSeed) : chat.title;
+
+        // ── /web path: Exa + LangGraph agent (SSE, same shape as normal chat) ──
+        if (webMode) {
+            console.log(`[POST /message] Web-search agent path for query="${webQuery.slice(0, 120)}"`);
+            beginSse(res);
+
+            writeSse(res, {
+                type: "meta",
+                chatId: chat.id,
+                title,
+                isNewSession,
+                mode: "web",
+                userMessage: {
+                    id: userMessage.id,
+                    role: userMessage.role,
+                    content: userMessage.content,
+                    createdAt: userMessage.createdAt,
+                },
+                sources: [],
+            });
+            writeSse(res, {
+                type: "status",
+                message: "Searching the web…",
+                mode: "web",
+            });
+
+            let clientClosed = false;
+            req.on("close", () => {
+                clientClosed = true;
+                console.log(`[POST /message] Client disconnected during web agent for chat ${chat.id}`);
+            });
+
+            let assistantText = "";
+            let sources: { rank: number; id: string; score: number; text: string }[] = [];
+            let streamFailed = false;
+
+            try {
+                const agentResult = await runWebSearchAgent(webQuery);
+                if (clientClosed) {
+                    // Still persist below if we got an answer
+                }
+
+                assistantText = agentResult.answer;
+                sources = agentResult.sources.map((s, i) => ({
+                    rank: i + 1,
+                    id: s.url || `web-${i + 1}`,
+                    score: 1,
+                    text: `${s.title}\n${s.url}\n${s.text.slice(0, 350)}`,
+                }));
+
+                if (!clientClosed && !res.writableEnded) {
+                    writeSse(res, {
+                        type: "status",
+                        message: "Synthesizing answer from web results…",
+                        mode: "web",
+                    });
+                    // Agent returns full text; send as one delta for the existing client stream handler
+                    writeSse(res, { type: "delta", content: assistantText });
+                }
+            } catch (webErr) {
+                streamFailed = true;
+                console.error(`[POST /message] Web agent error:`, webErr);
+                if (!clientClosed && !res.writableEnded) {
+                    writeSse(res, {
+                        type: "error",
+                        message:
+                            webErr instanceof Error
+                                ? webErr.message
+                                : "Web search agent failed",
+                    });
+                }
+            }
+
+            if (!assistantText.trim()) {
+                if (streamFailed) {
+                    if (!res.writableEnded) res.end();
+                    return;
+                }
+                assistantText = "I couldn't find enough information on the web to answer that.";
+                if (!clientClosed && !res.writableEnded) {
+                    writeSse(res, { type: "delta", content: assistantText });
+                }
+            }
+
+            const assistantMessage = await prismaClient.message.create({
+                data: {
+                    chatId: chat.id,
+                    role: "assistant",
+                    content: assistantText,
+                    sourceChunks: sources,
+                },
+            });
+
+            await prismaClient.chat.update({
+                where: { id: chat.id },
+                data: {
+                    updatedAt: new Date(),
+                    ...(shouldSetTitle ? { title } : {}),
+                },
+            });
+
+            if (!clientClosed && !res.writableEnded && !streamFailed) {
+                writeSse(res, {
+                    type: "done",
+                    chatId: chat.id,
+                    title,
+                    isNewSession,
+                    mode: "web",
+                    userMessage: {
+                        id: userMessage.id,
+                        role: userMessage.role,
+                        content: userMessage.content,
+                        createdAt: userMessage.createdAt,
+                    },
+                    assistantMessage: {
+                        id: assistantMessage.id,
+                        role: assistantMessage.role,
+                        content: assistantMessage.content,
+                        createdAt: assistantMessage.createdAt,
+                    },
+                    sources,
+                });
+            }
+            if (!res.writableEnded) res.end();
+            console.log(`[POST /message] Web agent done for chat ${chat.id}`);
+            return;
+        }
+
         // 3. Hybrid retrieval (dense + sparse → RRF top 50)
         console.log(`[POST /message] Step 3 — Hybrid retrieval for: "${message.slice(0, 120)}"`);
         const fusedChunks = await hybridRetrieve(message);
@@ -566,7 +710,7 @@ chatRouter.post("/message", async (req, res) => {
 
         // 5. Load prior messages for multi-turn context
         console.log(`[POST /message] Step 5 — Loading history (last 20 messages)`);
-        const history = 
+        const history =
         (await prismaClient.message.findMany({
             where: { chatId: chat.id },
             orderBy: { createdAt: "desc" },
@@ -584,8 +728,6 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}, userAgent=${Boolean(userAgent)}`);
 
         // 6. Stream LLM reply via OpenRouter → SSE to the client
-        const shouldSetTitle = isNewSession || chat.title === "New chat";
-        const title = shouldSetTitle ? titleFromMessage(message) : chat.title;
         const sources = topChunks.map((c, i) => ({
             rank: i + 1,
             id: c.id,
@@ -593,24 +735,14 @@ chatRouter.post("/message", async (req, res) => {
             text: c.text.slice(0, 400),
         }));
 
-        const writeSse = (payload: Record<string, unknown>) => {
-            if (res.writableEnded) return;
-            res.write(`data: ${JSON.stringify(payload)}\n\n`);
-        };
+        beginSse(res);
 
-        res.status(200);
-        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        // Hint Node/Express not to buffer the stream
-        res.flushHeaders?.();
-
-        writeSse({
+        writeSse(res, {
             type: "meta",
             chatId: chat.id,
             title,
             isNewSession,
+            mode: "memory",
             userMessage: {
                 id: userMessage.id,
                 role: userMessage.role,
@@ -650,14 +782,14 @@ chatRouter.post("/message", async (req, res) => {
                 const delta = chunk.choices?.[0]?.delta?.content;
                 if (typeof delta === "string" && delta.length > 0) {
                     assistantText += delta;
-                    writeSse({ type: "delta", content: delta });
+                    writeSse(res, { type: "delta", content: delta });
                 }
             }
         } catch (streamErr) {
             streamFailed = true;
             console.error(`[POST /message] OpenRouter stream error:`, streamErr);
             if (!clientClosed && !res.writableEnded) {
-                writeSse({
+                writeSse(res, {
                     type: "error",
                     message:
                         streamErr instanceof Error
@@ -680,7 +812,7 @@ chatRouter.post("/message", async (req, res) => {
             }
             assistantText = "I couldn't generate a response. Please try again.";
             if (!clientClosed && !res.writableEnded) {
-                writeSse({ type: "delta", content: assistantText });
+                writeSse(res, { type: "delta", content: assistantText });
             }
         }
 
@@ -706,11 +838,12 @@ chatRouter.post("/message", async (req, res) => {
         });
 
         if (!clientClosed && !res.writableEnded && !streamFailed) {
-            writeSse({
+            writeSse(res, {
                 type: "done",
                 chatId: chat.id,
                 title,
                 isNewSession,
+                mode: "memory",
                 userMessage: {
                     id: userMessage.id,
                     role: userMessage.role,
