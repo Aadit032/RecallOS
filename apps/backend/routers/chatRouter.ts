@@ -113,6 +113,7 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
 
 async function buildSystemPrompt(
     userId: string,
+    chatId: string,
     contextChunks: { text: string; id: string }[],
     projectSystemPrompt?: string | null
 ): Promise<string> {
@@ -130,14 +131,14 @@ async function buildSystemPrompt(
             : "";   
 
     const responses = await prismaClient.chat.findMany({
-        where: { userId },
+        where: { userId, id: { not: chatId }, summary: { not: null } },
         orderBy: { updatedAt: "desc" },
-        take: 5,
+        take: 3,
         select: { summary: true }
     });
 
     let finalSummary = responses.map(r => r.summary)
-    .filter((s): s is string => s !== null)
+    .filter((s): s is string => s !== null) 
     .join("\n");
 
     console.log(`[buildSystemPrompt] finalSummary: ${finalSummary}`);
@@ -552,7 +553,7 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
-            { role: "system" as const, content: await buildSystemPrompt(userId, topChunks, projectSystemPrompt) },
+            { role: "system" as const, content: await buildSystemPrompt(userId, chat.id, topChunks, projectSystemPrompt) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
                 content: m.content,
