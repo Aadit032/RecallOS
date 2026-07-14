@@ -18,6 +18,14 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
@@ -101,6 +109,7 @@ export default function Dashboard() {
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
 
@@ -243,12 +252,10 @@ export default function Dashboard() {
     window.open(data.presignedUrl, "_blank")
   }
 
-  const handleDeleteDocument = async (doc: DocumentItem) => {
-    const confirmed = window.confirm(
-      `Delete “${doc.title}”? This removes it from the queue (even if processing), storage, and search index.`
-    )
-    if (!confirmed) return
+  const confirmDeleteDocument = async () => {
+    if (!deleteTarget || deletingId) return
 
+    const doc = deleteTarget
     console.log(`[dashboard:handleDeleteDocument] Deleting documentId=${doc.id}`);
     setDeletingId(doc.id)
     try {
@@ -271,6 +278,7 @@ export default function Dashboard() {
       )
     } finally {
       setDeletingId(null)
+      setDeleteTarget(null)
     }
   }
 
@@ -589,7 +597,7 @@ export default function Dashboard() {
                       size="sm"
                       className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                       disabled={deletingId === doc.id}
-                      onClick={() => void handleDeleteDocument(doc)}
+                      onClick={() => setDeleteTarget(doc)}
                     >
                       {deletingId === doc.id ? (
                         <Loader2 className="size-3.5 animate-spin" />
@@ -624,6 +632,38 @@ export default function Dashboard() {
           )}
         </section>
       </main>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete document?</DialogTitle>
+            <DialogDescription>
+              {`Delete "${deleteTarget?.title}"? This removes it from the queue (even if processing), storage, and search index. This cannot be undone.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!!deletingId}
+              onClick={() => void confirmDeleteDocument()}
+            >
+              {deletingId ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

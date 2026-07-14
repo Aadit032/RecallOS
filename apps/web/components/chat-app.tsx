@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
+import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -264,14 +265,12 @@ function ExpandableMessage({ content }: { content: string }) {
 function FloatingPanel({
   open,
   onClose,
-  side = "left",
   children,
   title,
   count,
 }: {
   open: boolean
   onClose: () => void
-  side?: "left" | "right"
   children: React.ReactNode
   title: string
   count?: number
@@ -281,38 +280,46 @@ function FloatingPanel({
   useEffect(() => {
     if (!open) return
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      const target = e.target as HTMLElement
+      if (ref.current?.contains(target)) return
+      // Keep open when toggling the sidebar icon that owns this panel
+      if (target.closest?.("[data-panel-trigger]")) return
+      onClose()
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose()
     }
     document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
+    document.addEventListener("keydown", handleKey)
+    return () => {
+      document.removeEventListener("mousedown", handleClick)
+      document.removeEventListener("keydown", handleKey)
+    }
   }, [open, onClose])
 
   if (!open) return null
 
-  const posClass = side === "left"
-    ? "left-full ml-2"
-    : "right-full mr-2"
-
   return (
     <div
       ref={ref}
-      className={`animate-panel-in fixed z-[200] top-0 ${posClass} h-svh w-72 overflow-y-auto border-l border-border bg-popover shadow-xl`}
+      className="animate-panel-in fixed top-14 left-[calc(var(--sidebar-width-icon)+0.5rem)] z-[200] flex max-h-[min(22rem,calc(100svh-5rem))] w-56 flex-col overflow-hidden rounded-xl border border-zinc-300 bg-zinc-200 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
     >
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-popover/95 px-3 py-2.5 backdrop-blur-sm">
-        <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-zinc-300/80 px-2.5 py-2 dark:border-zinc-700/80">
+        <div className="flex items-center gap-1.5">
           <span className="text-xs font-medium">{title}</span>
           {typeof count === "number" && (
             <span className="text-[10px] opacity-60">{count}</span>
           )}
         </div>
         <button
+          type="button"
           onClick={onClose}
-          className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+          className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
         >
           <X className="size-3.5" />
         </button>
       </div>
-      <div className="p-2">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-1.5">{children}</div>
     </div>
   )
 }
@@ -355,8 +362,9 @@ function ChatLayout() {
   const [savingProject, setSavingProject] = useState(false)
   const [useragent, setUseragent] = useState<string>("");
 
-  // Floating panel states
+  // Floating panel states (collapsed sidebar pickers)
   const [openPanel, setOpenPanel] = useState<"projects" | "chats" | null>(null)
+  const [panelProjectIds, setPanelProjectIds] = useState<Set<string>>(new Set())
 
   // Source chunks panel
   const [openSourceMsgId, setOpenSourceMsgId] = useState<string | null>(null)
@@ -550,6 +558,11 @@ function ChatLayout() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
   }, [active?.messages.length, activeId, sending])
+
+  // Floating pickers only apply while the icon rail is collapsed
+  useEffect(() => {
+    if (sidebarState === "expanded") setOpenPanel(null)
+  }, [sidebarState])
 
   /* ── Actions ──────────────────────────────────────────────── */
 
@@ -769,20 +782,35 @@ function ChatLayout() {
 
   /* ── Top 5 pinned chats ───────────────────────────────────── */
 
-  const pinnedChats = useMemo(() => sessions.filter((s) => s.id !== DRAFT_ID && s.pinned).sort(sortSessions).slice(0, 5), [sessions])
-  const recentChats = useMemo(() => sessions.filter((s) => s.id !== DRAFT_ID && !s.pinned).sort(sortSessions).slice(0, 10), [sessions])
+  // Collapsed picker lists — unfiled only (project chats live under Projects)
+  const pinnedChats = useMemo(
+    () =>
+      sessions
+        .filter((s) => s.id !== DRAFT_ID && s.pinned && !s.projectId)
+        .sort(sortSessions)
+        .slice(0, 8),
+    [sessions]
+  )
+  const recentChats = useMemo(
+    () =>
+      sessions
+        .filter((s) => s.id !== DRAFT_ID && !s.pinned && !s.projectId)
+        .sort(sortSessions)
+        .slice(0, 20),
+    [sessions]
+  )
 
   /* ── Render ───────────────────────────────────────────────── */
 
   return (
-    <SidebarProvider defaultOpen className="h-svh! min-h-0!">
+    <>
       <Sidebar collapsible="icon" className="border-r">
-        {/* ── Expanded header ────────────────────────────────── */}
+        {/* ── Header ─────────────────────────────────────────── */}
         {sidebarState === "expanded" ? (
           <SidebarHeader className="gap-2 p-2">
-            <div className="flex items-center gap-2 mt-3">
+            <div className="mt-3 flex items-center gap-2">
               <SidebarTrigger />
-              <span className="font-display text-base font-medium tracking-tight truncate">
+              <span className="font-display truncate text-base font-medium tracking-tight">
                 RecallOS
               </span>
             </div>
@@ -805,48 +833,53 @@ function ChatLayout() {
             </div>
           </SidebarHeader>
         ) : (
-          <SidebarHeader className="border-b border-sidebar-border p-2">
-            <SidebarMenu>
+          <SidebarHeader className="items-center gap-1 p-2">
+            <SidebarTrigger className="size-8" />
+            <SidebarMenu className="items-center">
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={createChat} tooltip="New chat" className="justify-center">
+                <SidebarMenuButton
+                  onClick={() => {
+                    createChat()
+                    setOpenPanel(null)
+                  }}
+                  tooltip="New chat"
+                  className="justify-center"
+                >
                   <SquarePen className="size-4" />
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
-            <div className="flex justify-center">
-              <SidebarTrigger />
-            </div>
           </SidebarHeader>
         )}
 
         {/* ── Sidebar content ────────────────────────────────── */}
         <SidebarContent>
           {sidebarState === "collapsed" ? (
-            /* ── Collapsed: icons only → open floating panels ── */
-            <>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="Projects"
-                    onClick={() => setOpenPanel(openPanel === "projects" ? null : "projects")}
-                    isActive={openPanel === "projects"}
-                  >
-                    <Folder className="size-4" />
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="Chats"
-                    onClick={() => setOpenPanel(openPanel === "chats" ? null : "chats")}
-                    isActive={openPanel === "chats"}
-                  >
-                    <FileText className="size-4" />
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </>
+            /* ── Collapsed: major icons only ─────────────────── */
+            <SidebarMenu className="items-center gap-1 px-0">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  data-panel-trigger
+                  tooltip="Projects"
+                  onClick={() => setOpenPanel(openPanel === "projects" ? null : "projects")}
+                  isActive={openPanel === "projects"}
+                  className="justify-center"
+                >
+                  <Folder className="size-4" />
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  data-panel-trigger
+                  tooltip="Chats"
+                  onClick={() => setOpenPanel(openPanel === "chats" ? null : "chats")}
+                  isActive={openPanel === "chats"}
+                  className="justify-center"
+                >
+                  <FileText className="size-4" />
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           ) : (
             /* ── Expanded: full projects & chats sections ──────── */
             <>
@@ -1071,78 +1104,204 @@ function ChatLayout() {
 
         {/* ── Footer: account ────────────────────────────────── */}
         <SidebarFooter className="p-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <SidebarMenuButton tooltip="Account" className="justify-center">
-                <Avatar size="sm">
-                  <AvatarFallback><User className="size-4" /></AvatarFallback>
-                </Avatar>
-                <span className="truncate text-md group-data-[collapsible=icon]:hidden">Account</span>
-              </SidebarMenuButton>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" className="w-48">
-              <DropdownMenuItem asChild><Link href="/dashboard">Dashboard</Link></DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => { localStorage.removeItem("token"); window.location.href = "/signin" }}>
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <SidebarMenu className={sidebarState === "collapsed" ? "items-center" : undefined}>
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton tooltip="Account" className="justify-center">
+                    <Avatar size="sm">
+                      <AvatarFallback><User className="size-4" /></AvatarFallback>
+                    </Avatar>
+                    <span className="truncate text-md group-data-[collapsible=icon]:hidden">Account</span>
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start" className="w-48">
+                  <DropdownMenuItem asChild><Link href="/dashboard">Dashboard</Link></DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => { localStorage.removeItem("token"); window.location.href = "/signin" }}>
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
 
-      {/* Floating panels — only when sidebar is collapsed */}
+      {/* Floating pickers — only when sidebar is collapsed */}
       {sidebarState === "collapsed" && (
         <>
-          <FloatingPanel open={openPanel === "projects"} onClose={() => setOpenPanel(null)} title="Projects" count={projects.length}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Recent</span>
-              <button onClick={() => { setShowCreateProjectModal(true) }} className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors">
-                <Plus className="size-3" />
+          <FloatingPanel
+            open={openPanel === "projects"}
+            onClose={() => setOpenPanel(null)}
+            title="Projects"
+            count={projects.length}
+          >
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                Your projects
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCreateProjectModal(true)}
+                className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                title="New project"
+              >
+                <Plus className="size-3.5" />
               </button>
             </div>
             {projects.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">No projects yet.</p>
+              <p className="py-6 text-center text-xs text-muted-foreground">No projects yet.</p>
             ) : (
               <div className="space-y-0.5">
-                {projects.slice(0, 5).map((project) => (
-                  <button
-                    key={project.id}
-                    onClick={() => openEditProject(project)}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent transition-colors"
-                  >
-                    <Folder className="size-3 shrink-0 opacity-70" />
-                    <span className="truncate font-medium">{project.name}</span>
-                    {typeof project.chatCount === "number" && (
-                      <span className="ml-auto text-[10px] opacity-50">{project.chatCount}</span>
-                    )}
-                  </button>
-                ))}
+                {projects.map((project) => {
+                  const expanded = panelProjectIds.has(project.id)
+                  const projectChats = projectChatsMap.get(project.id) ?? []
+                  return (
+                    <div key={project.id}>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPanelProjectIds((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(project.id)) next.delete(project.id)
+                              else next.add(project.id)
+                              return next
+                            })
+                          }
+                          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70"
+                        >
+                          {expanded ? (
+                            <ChevronDown className="size-3 shrink-0 opacity-70" />
+                          ) : (
+                            <ChevronRight className="size-3 shrink-0 opacity-70" />
+                          )}
+                          <Folder className="size-3 shrink-0 opacity-70" />
+                          <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
+                          {typeof project.chatCount === "number" && (
+                            <span className="text-[10px] opacity-50">{project.chatCount}</span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          title="Edit project"
+                          onClick={() => openEditProject(project)}
+                          className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-zinc-300/70 hover:text-foreground dark:hover:bg-zinc-700/70"
+                        >
+                          <Settings2 className="size-3" />
+                        </button>
+                      </div>
+                      {expanded && (
+                        <div className="ml-4 space-y-0.5 border-l border-zinc-400/40 pl-2 dark:border-zinc-600/50">
+                          {projectChats.length === 0 ? (
+                            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">No chats</p>
+                          ) : (
+                            projectChats.map((chat) => (
+                              <button
+                                key={chat.id}
+                                type="button"
+                                onClick={() => selectChat(chat.id)}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70",
+                                  chat.id === active?.id && "bg-zinc-300/90 font-medium dark:bg-zinc-700/90"
+                                )}
+                              >
+                                {chat.pinned && <Pin className="size-3 shrink-0 opacity-70" />}
+                                <span className="truncate">{chat.title}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </FloatingPanel>
 
-          <FloatingPanel open={openPanel === "chats"} onClose={() => setOpenPanel(null)} title="Chats">
-            <div className="space-y-0.5">
-              <button
-                onClick={() => { void createChat(); setOpenPanel(null) }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent transition-colors"
-              >
-                <SquarePen className="size-3 shrink-0" />
-                <span className="font-medium">New chat</span>
-              </button>
-              {pinnedChats.length > 0 && (
-                <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs">
-                  <Pin className="size-3 shrink-0 opacity-50" />
-                  <span className="truncate text-muted-foreground">Pinned</span>
-                  <span className="ml-auto text-[10px] opacity-50">{pinnedChats.length}</span>
+          <FloatingPanel
+            open={openPanel === "chats"}
+            onClose={() => setOpenPanel(null)}
+            title="Chats"
+            count={unfiledChats.filter((s) => s.id !== DRAFT_ID).length}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                createChat()
+                setOpenPanel(null)
+              }}
+              className="mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70"
+            >
+              <SquarePen className="size-3 shrink-0" />
+              New chat
+            </button>
+
+            {pinnedChats.length > 0 && (
+              <div className="mb-2">
+                <div className="mb-1 flex items-center gap-1.5 px-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                  <Pin className="size-3 opacity-60" />
+                  Pinned
+                </div>
+                <div className="space-y-0.5">
+                  {pinnedChats.map((chat) => (
+                    <button
+                      key={chat.id}
+                      type="button"
+                      onClick={() => selectChat(chat.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70",
+                        chat.id === active?.id && "bg-zinc-300/90 font-medium dark:bg-zinc-700/90"
+                      )}
+                    >
+                      <Pin className="size-3 shrink-0 opacity-70" />
+                      <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+                      <span className="shrink-0 text-[10px] opacity-50">{formatChatTime(chat.updatedAt)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="mb-1 flex items-center gap-1.5 px-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                <FileText className="size-3 opacity-60" />
+                Recent
+              </div>
+              {loading && sessions.length <= 1 ? (
+                <p className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Loading…
+                </p>
+              ) : recentChats.length === 0 && pinnedChats.length === 0 ? (
+                <p className="py-6 text-center text-xs text-muted-foreground">No chats yet.</p>
+              ) : recentChats.length === 0 ? (
+                <p className="px-2 py-2 text-xs text-muted-foreground">No recent chats.</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {recentChats.map((chat) => (
+                    <button
+                      key={chat.id}
+                      type="button"
+                      onClick={() => selectChat(chat.id)}
+                      className={cn(
+                        "flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70",
+                        chat.id === active?.id && "bg-zinc-300/90 dark:bg-zinc-700/90"
+                      )}
+                    >
+                      <span className={cn("truncate", chat.id === active?.id && "font-medium")}>
+                        {chat.title}
+                      </span>
+                      <span className="text-[10px] opacity-60">
+                        {formatChatTime(chat.updatedAt)}
+                        {chat.projectName ? ` · ${chat.projectName}` : ""}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               )}
-              <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs">
-                <FileText className="size-3 shrink-0 opacity-50" />
-                <span className="truncate text-muted-foreground">Recent</span>
-                <span className="ml-auto text-[10px] opacity-50">{recentChats.length}</span>
-              </div>
             </div>
           </FloatingPanel>
         </>
@@ -1414,6 +1573,6 @@ function ChatLayout() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </SidebarProvider>
+    </>
   )
 }
