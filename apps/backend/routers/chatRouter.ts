@@ -7,6 +7,7 @@ import { openrouterClient } from "@repo/openrouter/client";
 import { messageSchema, bodySchema } from "../types"
 import dotenv from "dotenv";
 import type { JsonValue } from "../../../packages/db/generated/prisma/internal/prismaNamespace";
+import { webGraph } from "../agents/webagent"
 
 dotenv.config();
 
@@ -471,7 +472,8 @@ async function summarizeChat(currentSummary: string | null, messages: Message[],
 }
 
 async function webSearchAgent(query: string): Promise<string>{
-    
+    const response = await webGraph.invoke({ query });
+    return response.answer;
 }
 
 chatRouter.post("/message", async (req, res) => {
@@ -497,8 +499,8 @@ chatRouter.post("/message", async (req, res) => {
         const query = message.replace("/web", "").trim();
 
         try{
-            // const answer = await webSearchAgent(query);
-            // return res.status(200).json({ message: answer });
+            const answer = await webSearchAgent(query);
+            return res.status(200).json({ message: answer });
         }catch(e){
             res.status(500).json({ message: "Websearch agent failed.... Error: ", e });
         }
