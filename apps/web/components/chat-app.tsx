@@ -11,7 +11,9 @@ import {
    BookOpen,
    Check,
    ChevronDown,
+   ChevronLeft,
    ChevronRight,
+   Copy,
    FileText,
    Folder,
    FolderInput,
@@ -22,6 +24,7 @@ import {
    MicOff,
    MoreHorizontal,
    Paperclip,
+   Pencil,
    Pin,
    PinOff,
    Plus,
@@ -116,12 +119,27 @@ type AgentStep = {
    nextQuery?: string
 }
 
+/** One user edit + matching assistant reply (for 1/2, 2/2 switching). */
+type TurnVersion = {
+   userContent: string
+   assistantId: string
+   assistantContent: string
+   sourceChunks?: SourceChunk[]
+   agentSteps?: AgentStep[]
+   createdAt: string
+}
+
 type Message = {
    id: string
    role: Role
    content: string
    sourceChunks?: SourceChunk[]
    createdAt: string
+   /** Present on user messages after edit/resend — shared with following assistant */
+   versions?: TurnVersion[]
+   versionIndex?: number
+   /** Web agent trail (on assistant messages) */
+   agentSteps?: AgentStep[]
 }
 
 type Project = {
@@ -223,11 +241,8 @@ function linkifyBareUrls(text: string): string {
    )
 }
 
-function MarkdownContent({ content, onSourceClick }: { content: string; onSourceClick?: (rank: number) => void }) {
-   let processed = linkifyBareUrls(content)
-   if (onSourceClick) {
-      processed = processed.replace(/\[(\d+)\](?!\()/g, (_m, rank) => `[\u200B${rank}\u200B](source:${rank})`)
-   }
+function MarkdownContent({ content }: { content: string }) {
+   const processed = linkifyBareUrls(content)
 
    return (
       <Markdown
@@ -243,9 +258,9 @@ function MarkdownContent({ content, onSourceClick }: { content: string; onSource
                if (isBlock) return <code className={className} {...props}>{children}</code>
                return <code className="rounded bg-muted/50 px-1.5 py-0.5 text-xs" {...props}>{children}</code>
             },
-            ul: ({ children }) => <ul className="mb-2 list-inside list-disc space-y-1">{children}</ul>,
-            ol: ({ children }) => <ol className="mb-2 list-inside list-decimal space-y-1">{children}</ol>,
-            li: ({ children }) => <li>{children}</li>,
+            ul: ({ children }) => <ul className="mb-2 list-outside list-disc space-y-1 pl-5">{children}</ul>,
+            ol: ({ children }) => <ol className="mb-2 list-outside list-decimal space-y-1 pl-5">{children}</ol>,
+            li: ({ children }) => <li className="pl-1">{children}</li>,
             h1: ({ children }) => <h1 className="mb-2 text-lg font-semibold">{children}</h1>,
             h2: ({ children }) => <h2 className="mb-2 text-base font-semibold">{children}</h2>,
             h3: ({ children }) => <h3 className="mb-1 text-sm font-semibold">{children}</h3>,
@@ -255,30 +270,16 @@ function MarkdownContent({ content, onSourceClick }: { content: string; onSource
             table: ({ children }) => <div className="mb-2 overflow-x-auto"><table className="w-full text-sm">{children}</table></div>,
             th: ({ children }) => <th className="border-b border-border px-2 py-1 text-left font-medium">{children}</th>,
             td: ({ children }) => <td className="border-b border-border px-2 py-1">{children}</td>,
-            a: ({ children, href }) => {
-               if (href?.startsWith("source:") && onSourceClick) {
-                  const rank = parseInt(href.slice(7))
-                  return (
-                     <button
-                        type="button"
-                        onClick={(e) => { e.preventDefault(); onSourceClick(rank) }}
-                        className="inline-flex items-center rounded bg-primary/10 px-1 py-0.5 text-xs font-semibold text-primary underline underline-offset-2 hover:bg-primary/20 transition-colors align-middle cursor-pointer"
-                     >
-                        {children}
-                     </button>
-                  )
-               }
-               return (
-                  <a
-                     href={href}
-                     target="_blank"
-                     rel="noopener noreferrer"
-                     className="text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary break-words"
-                  >
-                     {children}
-                  </a>
-               )
-            },
+            a: ({ children, href }) => (
+               <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary break-words"
+               >
+                  {children}
+               </a>
+            ),
             hr: () => <hr className="my-3 border-border" />,
          }}
       >
@@ -305,6 +306,130 @@ function ExpandableMessage({ content }: { content: string }) {
             >
                {expanded ? "Show less" : "Show more"}
             </button>
+         )}
+      </div>
+   )
+}
+
+/* ── Version pager (1/2, 2/2) ─────────────────────────────────── */
+
+function VersionPager({
+   index,
+   total,
+   onPrev,
+   onNext,
+   className,
+}: {
+   index: number
+   total: number
+   onPrev: () => void
+   onNext: () => void
+   className?: string
+}) {
+   if (total <= 1) return null
+   return (
+      <div className={cn("inline-flex items-center gap-0.5 text-xs text-muted-foreground", className)}>
+         <button
+            type="button"
+            disabled={index <= 0}
+            onClick={onPrev}
+            className="rounded p-0.5 hover:bg-secondary hover:text-foreground disabled:opacity-30"
+            aria-label="Previous version"
+         >
+            <ChevronLeft className="size-3.5" />
+         </button>
+         <span className="min-w-[2.5rem] text-center tabular-nums font-medium">
+            {index + 1}/{total}
+         </span>
+         <button
+            type="button"
+            disabled={index >= total - 1}
+            onClick={onNext}
+            className="rounded p-0.5 hover:bg-secondary hover:text-foreground disabled:opacity-30"
+            aria-label="Next version"
+         >
+            <ChevronRight className="size-3.5" />
+         </button>
+      </div>
+   )
+}
+
+/* ── Agent steps (live or stored under an answer) ─────────────── */
+
+function AgentStepsList({
+   steps,
+   live,
+}: {
+   steps: AgentStep[]
+   live?: boolean
+}) {
+   return (
+      <ol className="space-y-2.5">
+         {steps.map((step, idx) => {
+            const isLatest = live && idx === steps.length - 1
+            return (
+               <li
+                  key={step.id}
+                  className={cn(
+                     "relative border-l-2 pl-3",
+                     isLatest ? "border-primary" : "border-border"
+                  )}
+               >
+                  <div className="flex flex-wrap items-center gap-2">
+                     <span className="text-xs font-medium text-foreground">{step.title}</span>
+                     {typeof step.iteration === "number" && step.iteration > 0 && (
+                        <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                           pass {step.iteration}
+                        </span>
+                     )}
+                     {step.step === "search" && typeof step.resultCount === "number" && (
+                        <span className="text-[10px] text-muted-foreground">{step.resultCount} hits</span>
+                     )}
+                     {isLatest && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+                  </div>
+                  {step.detail && (
+                     <p className="mt-0.5 text-xs text-muted-foreground">{step.detail}</p>
+                  )}
+                  {step.query && step.step === "search" && (
+                     <p className="mt-0.5 font-mono text-[11px] text-foreground/80">q: {step.query}</p>
+                  )}
+                  {step.reasoning && (
+                     <p className="mt-1 rounded-md bg-background/60 px-2 py-1.5 text-xs leading-relaxed text-foreground/90">
+                        <span className="font-medium text-muted-foreground">Reasoning · </span>
+                        {step.reasoning}
+                     </p>
+                  )}
+                  {step.nextQuery && (
+                     <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        Next search: <span className="text-foreground">{step.nextQuery}</span>
+                     </p>
+                  )}
+               </li>
+            )
+         })}
+      </ol>
+   )
+}
+
+function AgentStepsDropdown({ steps, defaultOpen = false }: { steps: AgentStep[]; defaultOpen?: boolean }) {
+   const [open, setOpen] = useState(defaultOpen)
+   if (!steps.length) return null
+   return (
+      <div className="rounded-lg border border-border/60 bg-muted/20">
+         <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+         >
+            <Globe className="size-3.5 shrink-0 text-primary" />
+            <span className="font-medium">Web agent steps</span>
+            <span className="text-[10px] opacity-70">{steps.length}</span>
+            <ChevronDown className={cn("ml-auto size-3.5 transition-transform", open && "rotate-180")} />
+         </button>
+         {open && (
+            <div className="border-t border-border/50 px-3 py-2.5">
+               <AgentStepsList steps={steps} />
+            </div>
          )}
       </div>
    )
@@ -399,9 +524,14 @@ function ChatLayout() {
    const [sending, setSending] = useState(false)
    /** Live status line while a request runs (e.g. web search agent). */
    const [sendStatus, setSendStatus] = useState("")
-   /** Live LangGraph steps for /web agent. */
+   /** Live LangGraph steps for /web agent (also mirrored to agentStepsRef). */
    const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
+   /** Collapsed live panel — steps still available on the assistant message. */
+   const [agentStepsDismissed, setAgentStepsDismissed] = useState(false)
    const [error, setError] = useState("")
+   /** When set, next send replaces this user turn and stacks a new answer version. */
+   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
    const [nextCursor, setNextCursor] = useState<string | null>(null)
    const [hasMore, setHasMore] = useState(false)
    const [projects, setProjects] = useState<Project[]>([])
@@ -433,6 +563,10 @@ function ChatLayout() {
 
    // Cancel sending
    const abortRef = useRef<AbortController | null>(null)
+   const agentStepsRef = useRef<AgentStep[]>([])
+   /** Versions carried through an edit/resend until applyDone */
+   const pendingEditVersionsRef = useRef<TurnVersion[] | null>(null)
+   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
    const fileRef = useRef<HTMLInputElement>(null)
    const bottomRef = useRef<HTMLDivElement>(null)
@@ -778,6 +912,73 @@ function ChatLayout() {
         }
       | { type: "error"; message: string }
 
+   const copyMessageText = async (id: string, text: string) => {
+      try {
+         await navigator.clipboard.writeText(text)
+         setCopiedMessageId(id)
+         window.setTimeout(() => setCopiedMessageId((cur) => (cur === id ? null : cur)), 1500)
+      } catch {
+         setError("Could not copy to clipboard")
+      }
+   }
+
+   const startEditMessage = (msg: Message) => {
+      if (sending) return
+      setDraft(msg.content)
+      setEditingMessageId(msg.id)
+      setError("")
+      window.setTimeout(() => {
+         textareaRef.current?.focus()
+         const el = textareaRef.current
+         if (el) {
+            el.selectionStart = el.value.length
+            el.selectionEnd = el.value.length
+         }
+      }, 0)
+   }
+
+   const cancelEdit = () => {
+      setEditingMessageId(null)
+      setDraft("")
+   }
+
+   const setTurnVersion = (userMessageId: string, nextIndex: number) => {
+      if (!active) return
+      setSessions((prev) =>
+         prev.map((s) => {
+            if (s.id !== active.id) return s
+            const ui = s.messages.findIndex((m) => m.id === userMessageId)
+            if (ui < 0) return s
+            const userMsg = s.messages[ui]!
+            const versions = userMsg.versions
+            if (!versions?.length || nextIndex < 0 || nextIndex >= versions.length) return s
+            const v = versions[nextIndex]!
+            const messages = s.messages.map((m, i) => {
+               if (i === ui) {
+                  return {
+                     ...m,
+                     content: v.userContent,
+                     versionIndex: nextIndex,
+                     versions,
+                  }
+               }
+               if (i === ui + 1 && m.role === "assistant") {
+                  return {
+                     ...m,
+                     id: v.assistantId,
+                     content: v.assistantContent,
+                     sourceChunks: v.sourceChunks,
+                     agentSteps: v.agentSteps,
+                     createdAt: v.createdAt,
+                  }
+               }
+               return m
+            })
+            return { ...s, messages }
+         })
+      )
+   }
+
    const sendMessage = async () => {
       const text = draft.trim()
       if (!text || !active || sending) return
@@ -797,13 +998,50 @@ function ChatLayout() {
 
       const content = text + docInfo
       const usingWebAgent = isWebSearchDraft(content)
+      const editTargetId = editingMessageId
       const tempUserId = `temp-user-${crypto.randomUUID()}`
       const tempAssistantId = `temp-assistant-${crypto.randomUUID()}`
       const sessionKeyRef = { current: active.id }
       // Track live IDs so cancel still works after meta/done replace temp IDs
       const liveUserIdRef = { current: tempUserId }
       const liveAssistantIdRef = { current: tempAssistantId }
-      const optimisticUser: Message = { id: tempUserId, role: "user", content, createdAt: new Date().toISOString() }
+
+      // Build prior versions if this is an edit/resend of an existing user turn
+      let priorVersions: TurnVersion[] = []
+      if (editTargetId) {
+         const editIdx = active.messages.findIndex((m) => m.id === editTargetId)
+         if (editIdx >= 0) {
+            const oldUser = active.messages[editIdx]!
+            const oldAssistant =
+               active.messages[editIdx + 1]?.role === "assistant"
+                  ? active.messages[editIdx + 1]
+                  : undefined
+            if (oldUser.versions && oldUser.versions.length > 0) {
+               priorVersions = [...oldUser.versions]
+            } else if (oldAssistant) {
+               priorVersions = [
+                  {
+                     userContent: oldUser.content,
+                     assistantId: oldAssistant.id,
+                     assistantContent: oldAssistant.content,
+                     sourceChunks: oldAssistant.sourceChunks,
+                     agentSteps: oldAssistant.agentSteps,
+                     createdAt: oldAssistant.createdAt,
+                  },
+               ]
+            }
+         }
+      }
+      pendingEditVersionsRef.current = priorVersions.length > 0 ? priorVersions : null
+
+      const optimisticUser: Message = {
+         id: tempUserId,
+         role: "user",
+         content,
+         createdAt: new Date().toISOString(),
+         versions: priorVersions.length > 0 ? priorVersions : undefined,
+         versionIndex: priorVersions.length > 0 ? priorVersions.length : undefined,
+      }
       const optimisticAssistant: Message = {
          id: tempAssistantId,
          role: "assistant",
@@ -814,20 +1052,34 @@ function ChatLayout() {
       setSessions((prev) =>
          prev.map((s) => {
             if (s.id !== active.id) return s
+            let baseMessages = s.messages
+            if (editTargetId) {
+               const editIdx = baseMessages.findIndex((m) => m.id === editTargetId)
+               if (editIdx >= 0) {
+                  // Drop the edited user turn and everything after it (client-side branch)
+                  baseMessages = baseMessages.slice(0, editIdx)
+               }
+            }
             return {
                ...s,
-               title: s.title === "New chat" && s.messages.length === 0 ? text.slice(0, 48) + (text.length > 48 ? "…" : "") : s.title,
+               title:
+                  s.title === "New chat" && baseMessages.length === 0
+                     ? text.slice(0, 48) + (text.length > 48 ? "…" : "")
+                     : s.title,
                updatedAt: new Date().toISOString(),
-               messages: [...s.messages, optimisticUser, optimisticAssistant],
-               messageCount: s.messageCount + 2,
+               messages: [...baseMessages, optimisticUser, optimisticAssistant],
+               messageCount: baseMessages.length + 2,
                messagesLoaded: true,
             }
          })
       )
       setDraft("")
+      setEditingMessageId(null)
       setSending(true)
       setSendStatus(usingWebAgent ? "Web search agent starting…" : "Searching memory and generating a reply…")
       setAgentSteps([])
+      agentStepsRef.current = []
+      setAgentStepsDismissed(false)
       setError("")
 
       const controller = new AbortController()
@@ -848,6 +1100,8 @@ function ChatLayout() {
             })
          )
          setDraft(text)
+         if (editTargetId) setEditingMessageId(editTargetId)
+         pendingEditVersionsRef.current = null
       }
 
       try {
@@ -895,6 +1149,7 @@ function ChatLayout() {
             const prevUserId = liveUserIdRef.current
             const prevAssistantId = liveAssistantIdRef.current
             liveUserIdRef.current = event.userMessage.id
+            const priorVersions = pendingEditVersionsRef.current
             const userMsg: Message = {
                id: event.userMessage.id,
                role: "user",
@@ -903,6 +1158,8 @@ function ChatLayout() {
                   typeof event.userMessage.createdAt === "string"
                      ? event.userMessage.createdAt
                      : new Date(event.userMessage.createdAt).toISOString(),
+               versions: priorVersions ?? undefined,
+               versionIndex: priorVersions ? priorVersions.length : undefined,
             }
 
             setSessions((prev) => {
@@ -964,6 +1221,24 @@ function ChatLayout() {
             const prevAssistantId = liveAssistantIdRef.current
             liveUserIdRef.current = event.userMessage.id
             liveAssistantIdRef.current = event.assistantMessage.id
+            const stepsSnapshot = [...agentStepsRef.current]
+            const newVersion: TurnVersion = {
+               userContent: event.userMessage.content,
+               assistantId: event.assistantMessage.id,
+               assistantContent: event.assistantMessage.content,
+               sourceChunks: event.sources ?? [],
+               agentSteps: stepsSnapshot.length > 0 ? stepsSnapshot : undefined,
+               createdAt:
+                  typeof event.assistantMessage.createdAt === "string"
+                     ? event.assistantMessage.createdAt
+                     : new Date(event.assistantMessage.createdAt).toISOString(),
+            }
+            const priorVersions = pendingEditVersionsRef.current
+            const allVersions =
+               priorVersions && priorVersions.length > 0
+                  ? [...priorVersions, newVersion]
+                  : undefined
+
             const userMsg: Message = {
                id: event.userMessage.id,
                role: "user",
@@ -972,16 +1247,16 @@ function ChatLayout() {
                   typeof event.userMessage.createdAt === "string"
                      ? event.userMessage.createdAt
                      : new Date(event.userMessage.createdAt).toISOString(),
+               versions: allVersions,
+               versionIndex: allVersions ? allVersions.length - 1 : undefined,
             }
             const assistantMsg: Message = {
                id: event.assistantMessage.id,
                role: "assistant",
                content: event.assistantMessage.content,
-               createdAt:
-                  typeof event.assistantMessage.createdAt === "string"
-                     ? event.assistantMessage.createdAt
-                     : new Date(event.assistantMessage.createdAt).toISOString(),
+               createdAt: newVersion.createdAt,
                sourceChunks: event.sources ?? [],
+               agentSteps: stepsSnapshot.length > 0 ? stepsSnapshot : undefined,
             }
 
             setSessions((prev) => {
@@ -1015,6 +1290,7 @@ function ChatLayout() {
             })
             sessionKeyRef.current = chatId
             setActiveId(chatId)
+            pendingEditVersionsRef.current = null
             finished = true
          }
 
@@ -1025,21 +1301,21 @@ function ChatLayout() {
             } else if (event.type === "status") {
                setSendStatus(event.message)
             } else if (event.type === "agent_step") {
-               setAgentSteps((prev) => [
-                  ...prev,
-                  {
-                     id: `step-${crypto.randomUUID()}`,
-                     step: event.step,
-                     title: event.title,
-                     detail: event.detail,
-                     query: event.query,
-                     resultCount: event.resultCount,
-                     iteration: event.iteration,
-                     enough: event.enough,
-                     reasoning: event.reasoning,
-                     nextQuery: event.nextQuery,
-                  },
-               ])
+               const step: AgentStep = {
+                  id: `step-${crypto.randomUUID()}`,
+                  step: event.step,
+                  title: event.title,
+                  detail: event.detail,
+                  query: event.query,
+                  resultCount: event.resultCount,
+                  iteration: event.iteration,
+                  enough: event.enough,
+                  reasoning: event.reasoning,
+                  nextQuery: event.nextQuery,
+               }
+               agentStepsRef.current = [...agentStepsRef.current, step]
+               setAgentSteps((prev) => [...prev, step])
+               setAgentStepsDismissed(false)
                if (event.title) setSendStatus(event.title)
             } else if (event.type === "delta") {
                setSendStatus(usingWebAgent ? "Streaming web answer…" : "Streaming reply…")
@@ -1092,7 +1368,9 @@ function ChatLayout() {
       } finally {
          setSending(false)
          setSendStatus("")
-         // agentSteps stay until the next send so the research trail remains readable
+         // Clear live panel; steps remain on the assistant message (dropdown)
+         setAgentSteps([])
+         setAgentStepsDismissed(false)
          abortRef.current = null
       }
    }
@@ -1694,21 +1972,15 @@ function ChatLayout() {
                                  <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-background/70 text-[10px] font-semibold">
                                     {chunk.rank}
                                  </span>
-                                 {isWebSource && href ? (
-                                    <a
-                                       href={href}
-                                       target="_blank"
-                                       rel="noopener noreferrer"
-                                       className="min-w-0 flex-1 truncate text-sm font-medium text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary"
-                                       title={href}
-                                    >
-                                       {label}
-                                    </a>
-                                 ) : (
-                                    <span className="truncate text-[10px] text-muted-foreground" title={chunk.id}>
-                                       {chunk.id.slice(0, 12)}…
-                                    </span>
-                                 )}
+                                 {isWebSource && label ? (
+                                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={href || label}>
+                                        {label}
+                                     </span>
+                                  ) : (
+                                     <span className="truncate text-[10px] text-muted-foreground" title={chunk.id}>
+                                        {chunk.id.slice(0, 12)}…
+                                     </span>
+                                  )}
                                  {!isWebSource && (
                                     <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
                                        {(chunk.score * 100).toFixed(1)}%
@@ -1783,22 +2055,75 @@ function ChatLayout() {
                         </div>
                      )}
 
-                     {!loadingMessages && active?.messages.map((message) => {
+                     {!loadingMessages && active?.messages.map((message, msgIndex) => {
                         if (message.role === "user") {
-                           const userUsedWeb = isWebSearchDraft(message.content)
+                           const displayRaw = message.content
+                           const userUsedWeb = isWebSearchDraft(displayRaw)
                            const displayContent = userUsedWeb
-                              ? message.content.replace(/^\/web\s*/i, "").trim() || message.content
-                              : message.content
+                              ? displayRaw.replace(/^\/web\s*/i, "").trim() || displayRaw
+                              : displayRaw
+                           const versionTotal = message.versions?.length ?? 0
+                           const versionIndex = message.versionIndex ?? 0
+                           const isEditingThis = editingMessageId === message.id
+
                            return (
-                              <div key={message.id} className="flex w-full flex-col items-end gap-1.5">
+                              <div key={message.id} className="group/user flex w-full flex-col items-end gap-1.5">
                                  {userUsedWeb && (
                                     <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-foreground">
                                        <Globe className="size-3 text-primary" />
                                        Web search
                                     </span>
                                  )}
-                                 <div className="max-w-[85%] rounded-2xl bg-secondary px-4 py-3 text-foreground sm:max-w-[75%]">
+                                 <div
+                                    className={cn(
+                                       "max-w-[85%] rounded-2xl bg-secondary px-4 py-3 text-foreground sm:max-w-[75%]",
+                                       isEditingThis && "ring-2 ring-primary/40"
+                                    )}
+                                 >
                                     <ExpandableMessage content={displayContent} />
+                                 </div>
+                                 <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover/user:opacity-100 sm:focus-within:opacity-100">
+                                    {versionTotal > 1 && (
+                                       <VersionPager
+                                          index={versionIndex}
+                                          total={versionTotal}
+                                          onPrev={() => setTurnVersion(message.id, versionIndex - 1)}
+                                          onNext={() => setTurnVersion(message.id, versionIndex + 1)}
+                                          className="mr-1"
+                                       />
+                                    )}
+                                    <Tooltip>
+                                       <TooltipTrigger asChild>
+                                          <button
+                                             type="button"
+                                             disabled={sending}
+                                             onClick={() => void copyMessageText(message.id, message.content)}
+                                             className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                                             aria-label="Copy message"
+                                          >
+                                             {copiedMessageId === message.id ? (
+                                                <Check className="size-3.5 text-primary" />
+                                             ) : (
+                                                <Copy className="size-3.5" />
+                                             )}
+                                          </button>
+                                       </TooltipTrigger>
+                                       <TooltipContent>Copy</TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                       <TooltipTrigger asChild>
+                                          <button
+                                             type="button"
+                                             disabled={sending}
+                                             onClick={() => startEditMessage(message)}
+                                             className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                                             aria-label="Edit message"
+                                          >
+                                             <Pencil className="size-3.5" />
+                                          </button>
+                                       </TooltipTrigger>
+                                       <TooltipContent>Edit & resend</TooltipContent>
+                                    </Tooltip>
                                  </div>
                               </div>
                            )
@@ -1815,142 +2140,127 @@ function ChatLayout() {
                         const isLiveStream =
                            sending && message.id.startsWith("temp-assistant-") && message.content.length > 0
 
-                        return (
-                           <div key={message.id} className="w-full space-y-2 text-foreground">
-                              <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">RecallOS</p>
-                              <div className="prose prose-sm dark:prose-invert max-w-none">
-                                 <MarkdownContent
-                                    content={message.content}
-                                    onSourceClick={message.sourceChunks && message.sourceChunks.length > 0
-                                       ? (rank) => {
-                                          setOpenSourceMsgId(message.id)
-                                          setTimeout(() => {
-                                             const el = document.getElementById(`source-rank-${rank}`)
-                                             el?.scrollIntoView({ behavior: "smooth", block: "center" })
-                                          }, 100)
-                                       }
-                                       : undefined}
-                                 />
-                                 {isLiveStream && (
-                                    <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-foreground/70 align-text-bottom" aria-hidden />
-                                 )}
-                              </div>
-                              {!sending && message.sourceChunks && message.sourceChunks.length > 0 && (
-                                 <button
-                                    onClick={() => setOpenSourceMsgId(openSourceMsgId === message.id ? null : message.id)}
-                                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                 >
-                                    <BookOpen className="size-3.5" />
-                                    <span>{message.sourceChunks.length} source{message.sourceChunks.length !== 1 ? "s" : ""}</span>
-                                 </button>
-                              )}
-                           </div>
-                        )
+                        // Pair with preceding user message for version pager
+                        const prevUser =
+                           msgIndex > 0 && active.messages[msgIndex - 1]?.role === "user"
+                              ? active.messages[msgIndex - 1]
+                              : undefined
+                        const versionTotal = prevUser?.versions?.length ?? 0
+                        const versionIndex = prevUser?.versionIndex ?? 0
+                        const storedSteps = message.agentSteps ?? []
+
+                         return (
+                            <div key={message.id} className="group/assistant w-full space-y-2 text-foreground">
+                               <div className="flex items-center gap-2">
+                                  <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+                                     RecallOS
+                                  </p>
+                                  {versionTotal > 1 && prevUser && (
+                                     <VersionPager
+                                        index={versionIndex}
+                                        total={versionTotal}
+                                        onPrev={() => setTurnVersion(prevUser.id, versionIndex - 1)}
+                                        onNext={() => setTurnVersion(prevUser.id, versionIndex + 1)}
+                                     />
+                                  )}
+                                  {!sending && message.content && (
+                                     <Tooltip>
+                                        <TooltipTrigger asChild>
+                                           <button
+                                              type="button"
+                                              onClick={() => void copyMessageText(message.id, message.content)}
+                                              className="ml-auto rounded-md p-1 text-muted-foreground opacity-100 hover:bg-secondary hover:text-foreground sm:opacity-0 sm:transition-opacity sm:group-hover/assistant:opacity-100"
+                                              aria-label="Copy answer"
+                                           >
+                                              {copiedMessageId === message.id ? (
+                                                 <Check className="size-3.5 text-primary" />
+                                              ) : (
+                                                 <Copy className="size-3.5" />
+                                              )}
+                                           </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>Copy answer</TooltipContent>
+                                     </Tooltip>
+                                  )}
+                               </div>
+                               {/* Persistent web agent trail (survives dismiss of the live panel) */}
+                               {!sending && storedSteps.length > 0 && (
+                                  <AgentStepsDropdown steps={storedSteps} />
+                               )}
+                               <div className="prose dark:prose-invert max-w-none">
+                                  <MarkdownContent content={message.content} />
+                                  {isLiveStream && (
+                                     <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-foreground/70 align-text-bottom" aria-hidden />
+                                  )}
+                               </div>
+                               <div className="flex flex-wrap items-center gap-3">
+                                  {!sending && message.sourceChunks && message.sourceChunks.length > 0 && (
+                                     <button
+                                        type="button"
+                                        onClick={() => setOpenSourceMsgId(openSourceMsgId === message.id ? null : message.id)}
+                                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                     >
+                                        <BookOpen className="size-3.5" />
+                                        <span>{message.sourceChunks.length} source{message.sourceChunks.length !== 1 ? "s" : ""}</span>
+                                     </button>
+                                  )}
+                               </div>
+                            </div>
+                         )
                      })}
 
-                     {(sending || agentSteps.length > 0) && (
+                     {sending && (
                         <div className="space-y-3">
-                           {sending && (
-                              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                                 {(sendStatus.toLowerCase().includes("web") || agentSteps.length > 0) && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 font-medium text-foreground">
-                                       <Globe className="size-3.5 text-primary" />
-                                       Web search
-                                    </span>
-                                 )}
-                                 <Loader2 className="size-4 animate-spin" />
-                                 <span>
-                                    {sendStatus ||
-                                       (active?.messages.some(
-                                          (m) =>
-                                             m.role === "assistant" &&
-                                             m.id.startsWith("temp-assistant-") &&
-                                             m.content.length > 0
-                                       )
-                                          ? "Streaming reply…"
-                                          : "Searching memory and generating a reply…")}
+                           <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                              {(sendStatus.toLowerCase().includes("web") || agentSteps.length > 0) && (
+                                 <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 font-medium text-foreground">
+                                    <Globe className="size-3.5 text-primary" />
+                                    Web search
                                  </span>
-                                 <button
-                                    type="button"
-                                    onClick={cancelSending}
-                                    className="text-xs font-medium text-destructive hover:underline"
-                                    title="Cancel request (Ctrl+C)"
-                                 >
-                                    Cancel <span className="font-mono text-[10px] opacity-80">Ctrl+C</span>
-                                 </button>
-                              </div>
-                           )}
+                              )}
+                              <Loader2 className="size-4 animate-spin" />
+                              <span>
+                                 {sendStatus ||
+                                    (active?.messages.some(
+                                       (m) =>
+                                          m.role === "assistant" &&
+                                          m.id.startsWith("temp-assistant-") &&
+                                          m.content.length > 0
+                                    )
+                                       ? "Streaming reply…"
+                                       : "Searching memory and generating a reply…")}
+                              </span>
+                              <button
+                                 type="button"
+                                 onClick={cancelSending}
+                                 className="text-xs font-medium text-destructive hover:underline"
+                                 title="Cancel request (Ctrl+C)"
+                              >
+                                 Cancel <span className="font-mono text-[10px] opacity-80">Ctrl+C</span>
+                              </button>
+                           </div>
 
-                           {agentSteps.length > 0 && (
+                           {agentSteps.length > 0 && !agentStepsDismissed && (
                               <div className="rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
                                  <div className="mb-2 flex items-center gap-2">
                                     <Globe className="size-3.5 text-primary" />
                                     <p className="font-mono text-[10px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                                        Agent steps
                                     </p>
-                                    {!sending && (
-                                       <button
-                                          type="button"
-                                          className="ml-auto text-[11px] text-muted-foreground hover:text-foreground"
-                                          onClick={() => setAgentSteps([])}
-                                       >
-                                          Dismiss
-                                       </button>
-                                    )}
+                                    <button
+                                       type="button"
+                                       className="ml-auto text-[11px] text-muted-foreground hover:text-foreground"
+                                       onClick={() => setAgentStepsDismissed(true)}
+                                    >
+                                       Dismiss
+                                    </button>
                                  </div>
-                                 <ol className="space-y-2.5">
-                                    {agentSteps.map((step, idx) => {
-                                       const isLatest = idx === agentSteps.length - 1 && sending
-                                       return (
-                                          <li
-                                             key={step.id}
-                                             className={cn(
-                                                "relative border-l-2 pl-3",
-                                                isLatest ? "border-primary" : "border-border"
-                                             )}
-                                          >
-                                             <div className="flex flex-wrap items-center gap-2">
-                                                <span className="text-xs font-medium text-foreground">
-                                                   {step.title}
-                                                </span>
-                                                {typeof step.iteration === "number" && step.iteration > 0 && (
-                                                   <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                                      pass {step.iteration}
-                                                   </span>
-                                                )}
-                                                {step.step === "search" && typeof step.resultCount === "number" && (
-                                                   <span className="text-[10px] text-muted-foreground">
-                                                      {step.resultCount} hits
-                                                   </span>
-                                                )}
-                                                {isLatest && (
-                                                   <Loader2 className="size-3 animate-spin text-muted-foreground" />
-                                                )}
-                                             </div>
-                                             {step.detail && (
-                                                <p className="mt-0.5 text-xs text-muted-foreground">{step.detail}</p>
-                                             )}
-                                             {step.query && step.step === "search" && (
-                                                <p className="mt-0.5 font-mono text-[11px] text-foreground/80">
-                                                   q: {step.query}
-                                                </p>
-                                             )}
-                                             {step.reasoning && (
-                                                <p className="mt-1 rounded-md bg-background/60 px-2 py-1.5 text-xs leading-relaxed text-foreground/90">
-                                                   <span className="font-medium text-muted-foreground">Reasoning · </span>
-                                                   {step.reasoning}
-                                                </p>
-                                             )}
-                                             {step.nextQuery && (
-                                                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                                   Next search: <span className="text-foreground">{step.nextQuery}</span>
-                                                </p>
-                                             )}
-                                          </li>
-                                       )
-                                    })}
-                                 </ol>
+                                 <AgentStepsList steps={agentSteps} live />
                               </div>
+                           )}
+
+                           {agentSteps.length > 0 && agentStepsDismissed && (
+                              <AgentStepsDropdown steps={agentSteps} />
                            )}
                         </div>
                      )}
@@ -1975,27 +2285,43 @@ function ChatLayout() {
                         <p className="mb-2 text-center text-xs font-medium text-muted-foreground">Listening… (UI only)</p>
                      )}
 
-                     {/* ChatGPT-style tool chip when /web is active in the composer */}
-                     {isWebSearchDraft(draft) && !sending && (
-                        <div className="mb-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-150">
-                           <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm shadow-sm">
-                              <Globe className="size-3.5 shrink-0 text-primary" />
-                              <span className="font-medium text-foreground">Web search</span>
-                              <span className="hidden text-muted-foreground sm:inline">· agent will search the live web</span>
-                              <button
-                                 type="button"
-                                 className="ml-0.5 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
-                                 aria-label="Remove web search"
-                                 title="Remove /web"
-                                 onClick={() =>
-                                    setDraft((d) => d.replace(/^\/web\s*/i, ""))
-                                 }
-                              >
-                                 <X className="size-3.5" />
-                              </button>
-                           </div>
-                        </div>
-                     )}
+                      {editingMessageId && !sending && (
+                         <div className="mb-2 flex items-center gap-2 rounded-full border border-primary/30 bg-background/50 px-3 py-1.5 text-sm shadow-sm backdrop-blur-lg">
+                            <Pencil className="size-3.5 text-primary" />
+                            <span className="font-medium text-foreground">Editing message</span>
+                            <span className="hidden text-muted-foreground sm:inline">· resend creates answer 2/2</span>
+                            <button
+                               type="button"
+                               className="ml-auto rounded-full p-0.5 text-muted-foreground hover:bg-background/80 hover:text-foreground"
+                               onClick={cancelEdit}
+                               aria-label="Cancel edit"
+                            >
+                               <X className="size-3.5" />
+                            </button>
+                         </div>
+                      )}
+
+                      {/* ChatGPT-style tool chip when /web is active in the composer */}
+                      {isWebSearchDraft(draft) && !sending && (
+                         <div className="mb-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-150">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-background/50 px-3 py-1.5 text-sm shadow-sm backdrop-blur-lg">
+                               <Globe className="size-3.5 shrink-0 text-primary" />
+                               <span className="font-medium text-foreground">Web search</span>
+                               <span className="hidden text-muted-foreground sm:inline">· agent will search the live web</span>
+                               <button
+                                  type="button"
+                                  className="ml-0.5 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                                  aria-label="Remove web search"
+                                  title="Remove /web"
+                                  onClick={() =>
+                                     setDraft((d) => d.replace(/^\/web\s*/i, ""))
+                                  }
+                               >
+                                  <X className="size-3.5" />
+                               </button>
+                            </div>
+                         </div>
+                      )}
 
                      <div className={cn(
                         "memory-glow flex items-center gap-1 rounded-full border bg-background/90 p-1.5 backdrop-blur-sm focus-within:ring-[3px]",
@@ -2052,13 +2378,16 @@ function ChatLayout() {
                         </div>
 
                         <Textarea
+                           ref={textareaRef}
                            value={draft}
                            onChange={(e) => setDraft(e.target.value)}
                            onKeyDown={onKeyDown}
                            placeholder={
-                              isWebSearchDraft(draft)
-                                 ? "Search the web… e.g. latest OpenAI announcements"
-                                 : "Type / for tools & agents…"
+                              editingMessageId
+                                 ? "Edit your message and resend…"
+                                 : isWebSearchDraft(draft)
+                                   ? "Search the web… e.g. latest OpenAI announcements"
+                                   : "Type / for tools & agents…"
                            }
                            rows={1}
                            disabled={sending || loadingMessages}

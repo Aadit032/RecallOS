@@ -192,10 +192,6 @@ async function answerNode(state: typeof WebState.State) {
         If the results are incomplete, say what is missing rather than inventing facts.
         Be concise and accurate.
 
-        When citing sources, ALWAYS use markdown links so they are clickable:
-        - Prefer: [Page Title](https://example.com/page)
-        - Never paste bare URLs without a markdown link.
-
         Question:
         ${state.query}
 
