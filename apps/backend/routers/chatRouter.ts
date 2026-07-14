@@ -111,6 +111,7 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
 }
 
 async function buildSystemPrompt(
+    userId: string,
     contextChunks: { text: string; id: string }[],
     projectSystemPrompt?: string | null
 ): Promise<string> {
@@ -127,11 +128,29 @@ async function buildSystemPrompt(
             ? `\n\nAdditional project instructions:\n${projectSystemPrompt.trim()}\n`
             : "";   
 
+    const responses = await prismaClient.chat.findMany({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+        take: 5,
+        select: { summary: true }
+    });
+
+    let finalSummary = responses.map(r => r.summary)
+    .filter((s): s is string => s !== null)
+    .join("\n");
+
+    console.log(`[buildSystemPrompt] finalSummary: ${finalSummary}`);
+
     return `You are RecallOS, an assistant that answers questions using the user's organizational knowledge base.
         Use ONLY the context chunks below to answer. If the context is insufficient, say so clearly.
         Cite chunk numbers like [1], [2] when you rely on them.
         Be concise and accurate.
+        
+        Recent conversation summaries: 
+        ${finalSummary || "None"} 
+        
         ${projectBlock}
+
         Context chunks:
         ${context || "(No relevant chunks found.)"}`;
 }
@@ -423,15 +442,18 @@ chatRouter.post("/message", async (req, res) => {
 
         // 5. Load prior messages for multi-turn context
         console.log(`[POST /message] Step 5 — Loading history (last 20 messages)`);
-        const history = await prismaClient.message.findMany({
+        
+        const history = 
+        (await prismaClient.message.findMany({
             where: { chatId: chat.id },
-            orderBy: { createdAt: "asc" },
+            orderBy: { createdAt: "desc" },
             take: 20,
-        });
+        })).reverse();
+
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
-            { role: "system" as const, content: await buildSystemPrompt(topChunks, projectSystemPrompt) },
+            { role: "system" as const, content: await buildSystemPrompt(userId, topChunks, projectSystemPrompt) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
                 content: m.content,
