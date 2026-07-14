@@ -35,24 +35,45 @@ export type WebSearchHit = {
     text: string;
 };
 
+/** Progress events streamed to the chat UI while the graph runs. */
+export type WebAgentProgressEvent =
+    | {
+          type: "step";
+          step: "start" | "search" | "reason" | "answer" | "done";
+          title: string;
+          detail?: string;
+          query?: string;
+          resultCount?: number;
+          iteration?: number;
+          enough?: boolean;
+          reasoning?: string;
+          nextQuery?: string;
+      };
+
 const WebState = Annotation.Root({
+    /** Original user question (without the /web prefix). */
     query: Annotation<string>(),
+    /** Query used for the next Exa search (may be refined by the reasoner). */
     nextSearchQuery: Annotation<string>({
         reducer: (_prev, update) => update,
         default: () => "",
     }),
+    /** Accumulated search hits across iterations. */
     searchResults: Annotation<WebSearchHit[]>({
         reducer: (state, update) => [...state, ...update],
         default: () => [],
     }),
+    /** Final natural-language answer. */
     answer: Annotation<string>({
         reducer: (_prev, update) => update,
         default: () => "",
     }),
+    /** Latest sufficiency judgment from the reasoner. */
     decision: Annotation<Decision | null>({
         reducer: (_prev, update) => update,
         default: () => null,
     }),
+    /** How many reason→search cycles have completed. */
     iteration: Annotation<number>({
         reducer: (_prev, update) => update,
         default: () => 0,
@@ -62,7 +83,10 @@ const WebState = Annotation.Root({
 function formatHits(hits: WebSearchHit[]): string {
     if (hits.length === 0) return "(no results yet)";
     return hits
-        .map((r, i) => `[${i + 1}] Title: ${r.title}\nURL: ${r.url}\nContent:\n${r.text}`)
+        .map(
+            (r, i) =>
+                `[${i + 1}] Title: ${r.title}\nURL: ${r.url}\nContent:\n${r.text}`
+        )
         .join("\n\n-----------------\n\n");
 }
 
@@ -82,6 +106,7 @@ function messageText(content: unknown): string {
     return String(content ?? "");
 }
 
+/** Exa search → append hits into state. */
 async function searchNode(state: typeof WebState.State) {
     const searchQuery = (state.nextSearchQuery || state.query).trim();
     if (!searchQuery) {
@@ -106,9 +131,15 @@ async function searchNode(state: typeof WebState.State) {
     return { searchResults: hits };
 }
 
+/**
+ * LLM judges whether accumulated results are enough.
+ * If not, proposes a single refined follow-up query.
+ */
 async function reasonNode(state: typeof WebState.State) {
     const results = formatHits(state.searchResults);
-    console.log(`[webagent:reason] judging ${state.searchResults.length} hits (iteration ${state.iteration})`);
+    console.log(
+        `[webagent:reason] judging ${state.searchResults.length} hits (iteration ${state.iteration})`
+    );
 
     const structured = llm.withStructuredOutput(ReasoningSchema);
     const decision = (await structured.invoke(`
@@ -135,7 +166,9 @@ async function reasonNode(state: typeof WebState.State) {
     `)) as Decision;
 
     const nextIteration = state.iteration + 1;
-    console.log(`[webagent:reason] enough=${decision.enoughInformation} nextQuery="${(decision.nextSearchQuery ?? "").slice(0, 80)}" iteration=${nextIteration}`);
+    console.log(
+        `[webagent:reason] enough=${decision.enoughInformation} nextQuery="${(decision.nextSearchQuery ?? "").slice(0, 80)}" iteration=${nextIteration}`
+    );
 
     return {
         decision,
@@ -149,14 +182,19 @@ async function reasonNode(state: typeof WebState.State) {
 /** Final answer from all collected hits. */
 async function answerNode(state: typeof WebState.State) {
     const context = formatHits(state.searchResults);
-    console.log(`[webagent:answer] synthesizing answer from ${state.searchResults.length} hits`);
+    console.log(
+        `[webagent:answer] synthesizing answer from ${state.searchResults.length} hits`
+    );
 
     const result = await llm.invoke(`
         You are a research assistant.
         Answer the user's question using ONLY the provided search results.
         If the results are incomplete, say what is missing rather than inventing facts.
-        Cite sources by title and URL when you rely on them.
         Be concise and accurate.
+
+        When citing sources, ALWAYS use markdown links so they are clickable:
+        - Prefer: [Page Title](https://example.com/page)
+        - Never paste bare URLs without a markdown link.
 
         Question:
         ${state.query}
@@ -182,9 +220,6 @@ function routeAfterReason(state: typeof WebState.State): "do_search" | "write_an
  *                                └─(need more)─────────→ do_search ↺
  *
  * Node names must not collide with state channel keys (query, answer, …).
- *
- * Invoke with: webGraph.invoke({ query: "…", nextSearchQuery: "…" })
- * Read: result.answer, result.searchResults
  */
 export const webGraph = new StateGraph(WebState)
     .addNode("do_search", searchNode)
@@ -199,8 +234,13 @@ export const webGraph = new StateGraph(WebState)
     .addEdge("write_answer", END)
     .compile();
 
-
-export async function runWebSearchAgent(query: string): Promise<{
+/**
+ * Run the web research agent, optionally streaming graph progress via onEvent.
+ */
+export async function runWebSearchAgent(
+    query: string,
+    onEvent?: (event: WebAgentProgressEvent) => void | Promise<void>
+): Promise<{
     answer: string;
     sources: WebSearchHit[];
     iterations: number;
@@ -214,20 +254,103 @@ export async function runWebSearchAgent(query: string): Promise<{
         };
     }
 
-    const result = await webGraph.invoke({
+    const input = {
         query: q,
         nextSearchQuery: q,
-        searchResults: [],
+        searchResults: [] as WebSearchHit[],
         answer: "",
-        decision: null,
+        decision: null as Decision | null,
         iteration: 0,
+    };
+
+    await onEvent?.({
+        type: "step",
+        step: "start",
+        title: "Starting web research agent",
+        detail: "Planning search → reason → answer loop",
+        query: q,
+    });
+
+    let activeQuery = q;
+    let answer = "";
+    const allSources: WebSearchHit[] = [];
+    let iterations = 0;
+
+    // Stream node-level updates so the UI can show each graph step live
+    const stream = await webGraph.stream(input, { streamMode: "updates" });
+
+    for await (const update of stream) {
+        if (update.do_search) {
+            const hits = (update.do_search.searchResults ?? []) as WebSearchHit[];
+            allSources.push(...hits);
+            await onEvent?.({
+                type: "step",
+                step: "search",
+                title: "Searching the web",
+                query: activeQuery,
+                resultCount: hits.length,
+                detail:
+                    hits.length > 0
+                        ? `Found ${hits.length} result${hits.length === 1 ? "" : "s"} for “${activeQuery.slice(0, 80)}${activeQuery.length > 80 ? "…" : ""}”`
+                        : `No results for “${activeQuery.slice(0, 80)}”`,
+                iteration: iterations,
+            });
+        }
+
+        if (update.reason) {
+            const decision = update.reason.decision as Decision | null | undefined;
+            iterations = (update.reason.iteration as number | undefined) ?? iterations + 1;
+            if (typeof update.reason.nextSearchQuery === "string") {
+                activeQuery = update.reason.nextSearchQuery;
+            }
+            await onEvent?.({
+                type: "step",
+                step: "reason",
+                title: decision?.enoughInformation
+                    ? "Results look sufficient"
+                    : "Need another search",
+                iteration: iterations,
+                enough: decision?.enoughInformation,
+                reasoning: decision?.reasoning,
+                nextQuery: decision?.enoughInformation
+                    ? undefined
+                    : decision?.nextSearchQuery || undefined,
+                detail: decision?.enoughInformation
+                    ? "Moving on to write the answer"
+                    : decision?.nextSearchQuery
+                      ? `Next query: “${decision.nextSearchQuery.slice(0, 100)}”`
+                      : "Refining search strategy",
+            });
+        }
+
+        if (update.write_answer) {
+            answer = (update.write_answer.answer as string) ?? "";
+            await onEvent?.({
+                type: "step",
+                step: "answer",
+                title: "Writing answer from sources",
+                detail: "Synthesizing a response with cited links",
+                iteration: iterations,
+            });
+        }
+    }
+
+    const finalAnswer =
+        answer.trim() ||
+        "I couldn't find enough information on the web to answer that.";
+
+    await onEvent?.({
+        type: "step",
+        step: "done",
+        title: "Web research complete",
+        detail: `${allSources.length} source${allSources.length === 1 ? "" : "s"} · ${iterations} reasoning pass${iterations === 1 ? "" : "es"}`,
+        iteration: iterations,
+        resultCount: allSources.length,
     });
 
     return {
-        answer:
-            result.answer?.trim() ||
-            "I couldn't find enough information on the web to answer that.",
-        sources: result.searchResults ?? [],
-        iterations: result.iteration ?? 0,
+        answer: finalAnswer,
+        sources: allSources,
+        iterations,
     };
 }

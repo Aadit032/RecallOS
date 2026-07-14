@@ -98,6 +98,22 @@ type SourceChunk = {
    id: string
    score: number
    text: string
+   /** Present for /web agent sources — open in a new tab */
+   url?: string
+   title?: string
+}
+
+type AgentStep = {
+   id: string
+   step: string
+   title: string
+   detail?: string
+   query?: string
+   resultCount?: number
+   iteration?: number
+   enough?: boolean
+   reasoning?: string
+   nextQuery?: string
 }
 
 type Message = {
@@ -189,10 +205,29 @@ function mapListItem(c: ChatListItem): ChatSession {
 
 /* ── Markdown renderer ────────────────────────────────────────── */
 
+/** Turn bare http(s) URLs into markdown links (skip ones already inside ](…)). */
+function linkifyBareUrls(text: string): string {
+   return text.replace(
+      /(?<!\]\()(?<!["'(=])(https?:\/\/[^\s<>\[\]`"']+[^\s<>\[\]`"'.,;:!?\)]?)/g,
+      (url) => {
+         // Trim trailing punctuation that is rarely part of the URL
+         let href = url
+         let trailing = ""
+         while (/[.,;:!?)]$/.test(href)) {
+            trailing = href.slice(-1) + trailing
+            href = href.slice(0, -1)
+         }
+         if (!href) return url
+         return `[${href}](${href})${trailing}`
+      }
+   )
+}
+
 function MarkdownContent({ content, onSourceClick }: { content: string; onSourceClick?: (rank: number) => void }) {
-   const processed = onSourceClick
-      ? content.replace(/\[(\d+)\](?!\()/g, (m, rank) => `[\u200B${rank}\u200B](source:${rank})`)
-      : content
+   let processed = linkifyBareUrls(content)
+   if (onSourceClick) {
+      processed = processed.replace(/\[(\d+)\](?!\()/g, (_m, rank) => `[\u200B${rank}\u200B](source:${rank})`)
+   }
 
    return (
       <Markdown
@@ -227,13 +262,22 @@ function MarkdownContent({ content, onSourceClick }: { content: string; onSource
                      <button
                         type="button"
                         onClick={(e) => { e.preventDefault(); onSourceClick(rank) }}
-                        className="inline-flex items-center rounded bg-primary/10 px-1 py-0.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors align-middle cursor-pointer"
+                        className="inline-flex items-center rounded bg-primary/10 px-1 py-0.5 text-xs font-semibold text-primary underline underline-offset-2 hover:bg-primary/20 transition-colors align-middle cursor-pointer"
                      >
                         {children}
                      </button>
                   )
                }
-               return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline-offset-2 hover:underline">{children}</a>
+               return (
+                  <a
+                     href={href}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary break-words"
+                  >
+                     {children}
+                  </a>
+               )
             },
             hr: () => <hr className="my-3 border-border" />,
          }}
@@ -355,6 +399,8 @@ function ChatLayout() {
    const [sending, setSending] = useState(false)
    /** Live status line while a request runs (e.g. web search agent). */
    const [sendStatus, setSendStatus] = useState("")
+   /** Live LangGraph steps for /web agent. */
+   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
    const [error, setError] = useState("")
    const [nextCursor, setNextCursor] = useState<string | null>(null)
    const [hasMore, setHasMore] = useState(false)
@@ -709,6 +755,18 @@ function ChatLayout() {
       | { type: "delta"; content: string }
       | { type: "status"; message: string; mode?: "web" | "memory" }
       | {
+           type: "agent_step"
+           step: string
+           title: string
+           detail?: string
+           query?: string
+           resultCount?: number
+           iteration?: number
+           enough?: boolean
+           reasoning?: string
+           nextQuery?: string
+        }
+      | {
            type: "done"
            chatId: string
            title: string
@@ -769,6 +827,7 @@ function ChatLayout() {
       setDraft("")
       setSending(true)
       setSendStatus(usingWebAgent ? "Web search agent starting…" : "Searching memory and generating a reply…")
+      setAgentSteps([])
       setError("")
 
       const controller = new AbortController()
@@ -965,6 +1024,23 @@ function ChatLayout() {
                applyMeta(event)
             } else if (event.type === "status") {
                setSendStatus(event.message)
+            } else if (event.type === "agent_step") {
+               setAgentSteps((prev) => [
+                  ...prev,
+                  {
+                     id: `step-${crypto.randomUUID()}`,
+                     step: event.step,
+                     title: event.title,
+                     detail: event.detail,
+                     query: event.query,
+                     resultCount: event.resultCount,
+                     iteration: event.iteration,
+                     enough: event.enough,
+                     reasoning: event.reasoning,
+                     nextQuery: event.nextQuery,
+                  },
+               ])
+               if (event.title) setSendStatus(event.title)
             } else if (event.type === "delta") {
                setSendStatus(usingWebAgent ? "Streaming web answer…" : "Streaming reply…")
                applyDelta(event.content)
@@ -1016,6 +1092,7 @@ function ChatLayout() {
       } finally {
          setSending(false)
          setSendStatus("")
+         // agentSteps stay until the next send so the research trail remains readable
          abortRef.current = null
       }
    }
@@ -1596,26 +1673,69 @@ function ChatLayout() {
                      </button>
                   </div>
                   <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pb-3">
-                     {chunks.map((chunk) => (
-                        <div
-                           key={chunk.id}
-                           id={`source-rank-${chunk.rank}`}
-                           className="scroll-mt-4 space-y-2 rounded-2xl bg-secondary px-4 py-3 text-foreground"
-                        >
-                           <div className="flex items-center gap-2">
-                              <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-background/70 text-[10px] font-semibold">
-                                 {chunk.rank}
-                              </span>
-                              <span className="truncate text-[10px] text-muted-foreground" title={chunk.id}>
-                                 {chunk.id.slice(0, 12)}…
-                              </span>
-                              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
-                                 {(chunk.score * 100).toFixed(1)}%
-                              </span>
+                     {chunks.map((chunk) => {
+                        // New /web sources store url/title; older rows may embed them in text
+                        let href = chunk.url
+                        let label = chunk.title || chunk.url || chunk.id
+                        if (!href && chunk.text) {
+                           const urlMatch = chunk.text.match(/https?:\/\/[^\s]+/)
+                           if (urlMatch) href = urlMatch[0]
+                           const firstLine = chunk.text.split("\n")[0]?.trim()
+                           if (firstLine && !firstLine.startsWith("http")) label = firstLine
+                        }
+                        const isWebSource = Boolean(href)
+                        return (
+                           <div
+                              key={`${chunk.id}-${chunk.rank}`}
+                              id={`source-rank-${chunk.rank}`}
+                              className="scroll-mt-4 space-y-2 rounded-2xl bg-secondary px-4 py-3 text-foreground"
+                           >
+                              <div className="flex items-center gap-2">
+                                 <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-background/70 text-[10px] font-semibold">
+                                    {chunk.rank}
+                                 </span>
+                                 {isWebSource && href ? (
+                                    <a
+                                       href={href}
+                                       target="_blank"
+                                       rel="noopener noreferrer"
+                                       className="min-w-0 flex-1 truncate text-sm font-medium text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary"
+                                       title={href}
+                                    >
+                                       {label}
+                                    </a>
+                                 ) : (
+                                    <span className="truncate text-[10px] text-muted-foreground" title={chunk.id}>
+                                       {chunk.id.slice(0, 12)}…
+                                    </span>
+                                 )}
+                                 {!isWebSource && (
+                                    <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
+                                       {(chunk.score * 100).toFixed(1)}%
+                                    </span>
+                                 )}
+                                 {isWebSource && (
+                                    <Globe className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+                                 )}
+                              </div>
+                              {isWebSource && href && (
+                                 <a
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block truncate text-[11px] text-primary underline underline-offset-2 decoration-primary/50 hover:decoration-primary"
+                                 >
+                                    {href}
+                                 </a>
+                              )}
+                              {chunk.text ? (
+                                 <p className="text-sm leading-relaxed text-muted-foreground line-clamp-6">
+                                    {chunk.text}
+                                 </p>
+                              ) : null}
                            </div>
-                           <p className="text-sm leading-relaxed">{chunk.text}</p>
-                        </div>
-                     ))}
+                        )
+                     })}
                   </div>
                </div>
             )
@@ -1728,34 +1848,110 @@ function ChatLayout() {
                         )
                      })}
 
-                     {sending && (
-                        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                           {sendStatus.toLowerCase().includes("web") ? (
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 font-medium text-foreground">
-                                 <Globe className="size-3.5 text-primary" />
-                                 Web search
-                              </span>
-                           ) : null}
-                           <Loader2 className="size-4 animate-spin" />
-                           <span>
-                              {sendStatus ||
-                                 (active?.messages.some(
-                                    (m) =>
-                                       m.role === "assistant" &&
-                                       m.id.startsWith("temp-assistant-") &&
-                                       m.content.length > 0
-                                 )
-                                    ? "Streaming reply…"
-                                    : "Searching memory and generating a reply…")}
-                           </span>
-                           <button
-                              type="button"
-                              onClick={cancelSending}
-                              className="text-xs font-medium text-destructive hover:underline"
-                              title="Cancel request (Ctrl+C)"
-                           >
-                              Cancel <span className="font-mono text-[10px] opacity-80">Ctrl+C</span>
-                           </button>
+                     {(sending || agentSteps.length > 0) && (
+                        <div className="space-y-3">
+                           {sending && (
+                              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                                 {(sendStatus.toLowerCase().includes("web") || agentSteps.length > 0) && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 font-medium text-foreground">
+                                       <Globe className="size-3.5 text-primary" />
+                                       Web search
+                                    </span>
+                                 )}
+                                 <Loader2 className="size-4 animate-spin" />
+                                 <span>
+                                    {sendStatus ||
+                                       (active?.messages.some(
+                                          (m) =>
+                                             m.role === "assistant" &&
+                                             m.id.startsWith("temp-assistant-") &&
+                                             m.content.length > 0
+                                       )
+                                          ? "Streaming reply…"
+                                          : "Searching memory and generating a reply…")}
+                                 </span>
+                                 <button
+                                    type="button"
+                                    onClick={cancelSending}
+                                    className="text-xs font-medium text-destructive hover:underline"
+                                    title="Cancel request (Ctrl+C)"
+                                 >
+                                    Cancel <span className="font-mono text-[10px] opacity-80">Ctrl+C</span>
+                                 </button>
+                              </div>
+                           )}
+
+                           {agentSteps.length > 0 && (
+                              <div className="rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
+                                 <div className="mb-2 flex items-center gap-2">
+                                    <Globe className="size-3.5 text-primary" />
+                                    <p className="font-mono text-[10px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                                       Agent steps
+                                    </p>
+                                    {!sending && (
+                                       <button
+                                          type="button"
+                                          className="ml-auto text-[11px] text-muted-foreground hover:text-foreground"
+                                          onClick={() => setAgentSteps([])}
+                                       >
+                                          Dismiss
+                                       </button>
+                                    )}
+                                 </div>
+                                 <ol className="space-y-2.5">
+                                    {agentSteps.map((step, idx) => {
+                                       const isLatest = idx === agentSteps.length - 1 && sending
+                                       return (
+                                          <li
+                                             key={step.id}
+                                             className={cn(
+                                                "relative border-l-2 pl-3",
+                                                isLatest ? "border-primary" : "border-border"
+                                             )}
+                                          >
+                                             <div className="flex flex-wrap items-center gap-2">
+                                                <span className="text-xs font-medium text-foreground">
+                                                   {step.title}
+                                                </span>
+                                                {typeof step.iteration === "number" && step.iteration > 0 && (
+                                                   <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                                      pass {step.iteration}
+                                                   </span>
+                                                )}
+                                                {step.step === "search" && typeof step.resultCount === "number" && (
+                                                   <span className="text-[10px] text-muted-foreground">
+                                                      {step.resultCount} hits
+                                                   </span>
+                                                )}
+                                                {isLatest && (
+                                                   <Loader2 className="size-3 animate-spin text-muted-foreground" />
+                                                )}
+                                             </div>
+                                             {step.detail && (
+                                                <p className="mt-0.5 text-xs text-muted-foreground">{step.detail}</p>
+                                             )}
+                                             {step.query && step.step === "search" && (
+                                                <p className="mt-0.5 font-mono text-[11px] text-foreground/80">
+                                                   q: {step.query}
+                                                </p>
+                                             )}
+                                             {step.reasoning && (
+                                                <p className="mt-1 rounded-md bg-background/60 px-2 py-1.5 text-xs leading-relaxed text-foreground/90">
+                                                   <span className="font-medium text-muted-foreground">Reasoning · </span>
+                                                   {step.reasoning}
+                                                </p>
+                                             )}
+                                             {step.nextQuery && (
+                                                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                                   Next search: <span className="text-foreground">{step.nextQuery}</span>
+                                                </p>
+                                             )}
+                                          </li>
+                                       )
+                                    })}
+                                 </ol>
+                              </div>
+                           )}
                         </div>
                      )}
                      <div ref={bottomRef} className="h-px w-full shrink-0" />
@@ -1862,7 +2058,7 @@ function ChatLayout() {
                            placeholder={
                               isWebSearchDraft(draft)
                                  ? "Search the web… e.g. latest OpenAI announcements"
-                                 : "Ask anything about your knowledge base…  (or /web …)"
+                                 : "Type / for tools & agents…"
                            }
                            rows={1}
                            disabled={sending || loadingMessages}

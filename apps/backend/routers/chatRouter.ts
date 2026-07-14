@@ -588,7 +588,7 @@ chatRouter.post("/message", async (req, res) => {
             });
             writeSse(res, {
                 type: "status",
-                message: "Searching the web…",
+                message: "Starting web research agent…",
                 mode: "web",
             });
 
@@ -599,27 +599,74 @@ chatRouter.post("/message", async (req, res) => {
             });
 
             let assistantText = "";
-            let sources: { rank: number; id: string; score: number; text: string }[] = [];
+            let sources: {
+                rank: number;
+                id: string;
+                score: number;
+                text: string;
+                url?: string;
+                title?: string;
+            }[] = [];
             let streamFailed = false;
 
             try {
-                const agentResult = await runWebSearchAgent(webQuery);
-                if (clientClosed) {
-                    // Still persist below if we got an answer
-                }
+                const agentResult = await runWebSearchAgent(webQuery, async (event) => {
+                    if (clientClosed || res.writableEnded) return;
+
+                    const statusMessage =
+                        event.step === "search"
+                            ? event.detail ?? "Searching the web…"
+                            : event.step === "reason"
+                              ? event.title
+                              : event.step === "answer"
+                                ? "Writing answer from sources…"
+                                : event.step === "done"
+                                  ? "Web research complete"
+                                  : event.title;
+
+                    writeSse(res, {
+                        type: "status",
+                        message: statusMessage,
+                        mode: "web",
+                    });
+
+                    writeSse(res, {
+                        type: "agent_step",
+                        step: event.step,
+                        title: event.title,
+                        detail: event.detail,
+                        query: event.query,
+                        resultCount: event.resultCount,
+                        iteration: event.iteration,
+                        enough: event.enough,
+                        reasoning: event.reasoning,
+                        nextQuery: event.nextQuery,
+                    });
+                });
 
                 assistantText = agentResult.answer;
-                sources = agentResult.sources.map((s, i) => ({
-                    rank: i + 1,
-                    id: s.url || `web-${i + 1}`,
-                    score: 1,
-                    text: `${s.title}\n${s.url}\n${s.text.slice(0, 350)}`,
-                }));
+                // Dedupe sources by URL for the panel
+                const seen = new Set<string>();
+                sources = agentResult.sources
+                    .filter((s) => {
+                        const key = s.url || s.title;
+                        if (!key || seen.has(key)) return false;
+                        seen.add(key);
+                        return true;
+                    })
+                    .map((s, i) => ({
+                        rank: i + 1,
+                        id: s.url || `web-${i + 1}`,
+                        score: 1,
+                        text: s.text.slice(0, 350),
+                        url: s.url || undefined,
+                        title: s.title || undefined,
+                    }));
 
                 if (!clientClosed && !res.writableEnded) {
                     writeSse(res, {
                         type: "status",
-                        message: "Synthesizing answer from web results…",
+                        message: "Streaming web answer…",
                         mode: "web",
                     });
                     // Agent returns full text; send as one delta for the existing client stream handler
