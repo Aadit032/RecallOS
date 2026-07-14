@@ -1,6 +1,33 @@
-## Instructions
+## Rubric for scoring the confidence and importance for each memory:
+```text
+Extract durable memories from this conversation.
 
+For each memory output:
 
+{
+  "content": "...",
+  "importance": 1-10
+}
+
+Importance rubric:
+
+10 = Core long-term preference, identity, or ongoing project.
+7-9 = Frequently useful preference or active long-term goal.
+4-6 = Useful background information.
+1-3 = Minor fact that may become irrelevant.
+
+Confidence rubric:
+
+1.0 = User explicitly stated this.
+0.8 = Strongly implied.
+0.5 = Reasonable inference.
+0.2 = Weak inference.
+
+Importance = LLM score
+           + retrieval bonus
+           + reconfirmation bonus
+           - age decay
+```
 
 ## Memory architecture
 

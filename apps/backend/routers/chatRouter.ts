@@ -387,9 +387,7 @@ chatRouter.post("/message", async (req, res) => {
             chatId != null
                 ? await prismaClient.chat.findFirst({
                       where: { id: chatId, userId },
-                      include: {
-                          project: { select: { id: true, name: true, systemPrompt: true } },
-                      },
+                      include: { project: { select: { id: true, name: true, systemPrompt: true } } },
                   })
                 : null;
 
