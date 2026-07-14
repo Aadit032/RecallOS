@@ -470,6 +470,9 @@ async function summarizeChat(currentSummary: string | null, messages: Message[],
     return summary;
 }
 
+async function webSearchAgent(query: string): Promise<string>{
+    
+}
 
 chatRouter.post("/message", async (req, res) => {
     const userId = req.userId;
@@ -489,6 +492,17 @@ chatRouter.post("/message", async (req, res) => {
 
     const { message, chatId, userAgent } = parsed.data;
     console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}`);
+
+    if(message.startsWith("/web")){
+        const query = message.replace("/web", "").trim();
+
+        try{
+            // const answer = await webSearchAgent(query);
+            // return res.status(200).json({ message: answer });
+        }catch(e){
+            res.status(500).json({ message: "Websearch agent failed.... Error: ", e });
+        }
+    }
 
     try {
         // 1. Resolve or create chat session (session is created on first message)
