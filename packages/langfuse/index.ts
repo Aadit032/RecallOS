@@ -56,9 +56,8 @@ export type InitTracingOptions = {
   enabled?: boolean;
 };
 
-/**
- * Mask API keys, JWTs, and common secret patterns before export to Langfuse.
- */
+
+// Mask API keys, JWTs, and common secret patterns before export to Langfuse.
 function maskSensitiveData(data: unknown): unknown {
   if (data == null) return data;
   if (typeof data === "string") {
@@ -98,30 +97,19 @@ export function initTracing(options: InitTracingOptions = {}): boolean {
 
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  const baseUrl =
-    process.env.LANGFUSE_BASE_URL ??
-    process.env.LANGFUSE_HOST ??
-    "https://cloud.langfuse.com";
+  const baseUrl = process.env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com";
 
-  const wantEnabled =
-    options.enabled ??
-    process.env.LANGFUSE_TRACING_ENABLED !== "false";
+  const wantEnabled = options.enabled ?? process.env.LANGFUSE_TRACING_ENABLED !== "false";
 
   if (!wantEnabled || !publicKey || !secretKey) {
     initialized = true;
     enabled = false;
-    console.log(
-      `[langfuse] Tracing disabled for ${options.serviceName ?? "app"} ` +
-        `(missing LANGFUSE_PUBLIC_KEY/SECRET_KEY or LANGFUSE_TRACING_ENABLED=false)`
-    );
+    console.log(`[langfuse] Tracing disabled for ${options.serviceName ?? "app"} ` + `(missing LANGFUSE_PUBLIC_KEY/SECRET_KEY or LANGFUSE_TRACING_ENABLED=false)`);
     return false;
   }
 
   try {
-    const environment =
-      process.env.LANGFUSE_TRACING_ENVIRONMENT ??
-      process.env.NODE_ENV ??
-      "development";
+    const environment = process.env.LANGFUSE_TRACING_ENVIRONMENT ?? "development";
 
     const processor = new LangfuseSpanProcessor({
       publicKey,
@@ -132,18 +120,13 @@ export function initTracing(options: InitTracingOptions = {}): boolean {
       mask: ({ data }) => maskSensitiveData(data),
     });
 
-    sdk = new NodeSDK({
-      spanProcessors: [processor],
-    });
+    sdk = new NodeSDK({ spanProcessors: [processor] });
     sdk.start();
 
     initialized = true;
     enabled = true;
 
-    console.log(
-      `[langfuse] Tracing enabled for ${options.serviceName ?? "app"} ` +
-        `(env=${environment}, baseUrl=${baseUrl})`
-    );
+    console.log(`[langfuse] Tracing enabled for ${options.serviceName ?? "app"} ` + `(env=${environment}, baseUrl=${baseUrl})`);
 
     const flush = async () => {
       try {
@@ -153,15 +136,9 @@ export function initTracing(options: InitTracingOptions = {}): boolean {
       }
     };
 
-    process.once("SIGTERM", () => {
-      void flush().finally(() => process.exit(0));
-    });
-    process.once("SIGINT", () => {
-      void flush().finally(() => process.exit(0));
-    });
-    process.once("beforeExit", () => {
-      void flush();
-    });
+    process.once("SIGTERM", () => { void flush().finally(() => process.exit(0)) });
+    process.once("SIGINT", () => { void flush().finally(() => process.exit(0)) });
+    process.once("beforeExit", () => { void flush() });
 
     return true;
   } catch (e) {
@@ -214,14 +191,9 @@ export function usageFromOpenRouter(
 } {
   if (!usage) return {};
 
-  const input =
-    usage.promptTokens ?? usage.prompt_tokens ?? undefined;
-  const output =
-    usage.completionTokens ?? usage.completion_tokens ?? undefined;
-  const total =
-    usage.totalTokens ??
-    usage.total_tokens ??
-    (input != null && output != null ? input + output : undefined);
+  const input = usage.promptTokens ?? usage.prompt_tokens ?? undefined;
+  const output = usage.completionTokens ?? usage.completion_tokens ?? undefined;
+  const total = usage.totalTokens ?? usage.total_tokens ?? (input != null && output != null ? input + output : undefined);
 
   const usageDetails: Record<string, number> = {};
   if (input != null) usageDetails.input = input;
@@ -239,9 +211,7 @@ export function usageFromOpenRouter(
   };
 }
 
-/**
- * Trace a non-streaming OpenRouter (or compatible) chat completion as a generation.
- */
+//  Trace a non-streaming OpenRouter (or compatible) chat completion as a generation.
 export async function withGeneration<T>(
   name: string,
   params: {

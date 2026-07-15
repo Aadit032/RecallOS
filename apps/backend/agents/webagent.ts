@@ -4,28 +4,15 @@ import { ChatOpenRouter } from "@langchain/openrouter";
 import { ReasoningSchema } from "../types";
 import type { z } from "zod";
 import dotenv from "dotenv";
-import {
-    createLangChainHandler,
-    startActiveObservation,
-    truncateForTrace,
-} from "@repo/langfuse/client";
+import { createLangChainHandler, startActiveObservation, truncateForTrace } from "@repo/langfuse/client";
 
 dotenv.config();
 
-const WEB_MODEL =
-    process.env.WEB_AGENT_MODEL ??
-    process.env.CHAT_MODEL ??
-    process.env.CONTEXT_MODEL ??
-    "openai/gpt-4o-mini";
+const WEB_MODEL = process.env.CHAT_MODEL ?? "openrouter/free";
 
-const llm = new ChatOpenRouter({
-    apiKey: process.env.OPENROUTER_API_KEY!,
-    model: WEB_MODEL,
-});
+const llm = new ChatOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY!, model: WEB_MODEL });
 
-if (!process.env.EXA_API_KEY) {
-    console.warn("[webagent] EXA_API_KEY is not set — web search will fail at runtime");
-}
+if (!process.env.EXA_API_KEY) console.warn("[webagent] EXA_API_KEY is not set — web search will fail at runtime");
 
 const exa = new Exa(process.env.EXA_API_KEY);
 
@@ -375,9 +362,7 @@ export async function runWebSearchAgent(
                 }
             }
 
-            const finalAnswer =
-                answer.trim() ||
-                "I couldn't find enough information on the web to answer that.";
+            const finalAnswer = answer.trim() || "I couldn't find enough information on the web to answer that.";
 
             await onEvent?.({
                 type: "step",
