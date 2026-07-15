@@ -8,6 +8,14 @@ import { messageSchema, bodySchema } from "../types"
 import dotenv from "dotenv";
 import type { JsonValue } from "../../../packages/db/generated/prisma/internal/prismaNamespace";
 import { runWebSearchAgent } from "../agents/webagent"
+import {
+    startActiveObservation,
+    propagateAttributes,
+    withGeneration,
+    withStreamingGeneration,
+    truncateForTrace,
+    type OpenRouterUsageLike,
+} from "@repo/langfuse/client";
 
 dotenv.config();
 
@@ -30,86 +38,112 @@ type RetrievedChunk = {
  * fused with Reciprocal Rank Fusion in Qdrant → top 50.
  */
 async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
-    console.log(`[hybridRetrieve] Starting retrieval for query: "${query.slice(0, 120)}"`);
-    const [denseVectors, sparseVectors] = await Promise.all([
-        getDenseVectors([query]),
-        getSparseVectors([query]),
-    ]);
-    console.log(`[hybridRetrieve] Dense vector dims: ${denseVectors[0]?.length ?? 0}, Sparse vector nnz: ${sparseVectors[0]?.indices?.length ?? 0}`);
-
-    const denseVector = denseVectors[0];
-    const sparse = sparseVectors[0];
-
-    if (!denseVector || !sparse) {
-        console.error("[hybridRetrieve] Failed to embed query — no vectors returned");
-        throw new Error("Failed to embed query");
-    }
-
-    // Build sparse query — ensure sorted indices (Qdrant requires ascending order)
-    const rawIndices = Array.from(sparse.indices as Iterable<number>);
-    const rawValues = Array.from(sparse.values as Iterable<number>);
-    const paired = rawIndices.map((idx, i) => ({ idx, val: rawValues[i] ?? 0 }))
-        .filter(p => p.val !== 0)
-        .sort((a, b) => a.idx - b.idx);
-    const sparseQuery = {
-        indices: paired.map(p => p.idx),
-        values: paired.map(p => p.val),
-    };
-
-    const denseQuery = Array.from(denseVector as ArrayLike<number>);
-
-    // Validate vectors before sending to Qdrant
-    if (denseQuery.some(v => !Number.isFinite(v))) {
-        console.error("[hybridRetrieve] Dense vector contains NaN or Infinity");
-        throw new Error("Dense vector contains invalid values");
-    }
-    if (sparseQuery.indices.length === 0) {
-        console.error("[hybridRetrieve] Sparse vector has no non-zero entries");
-        throw new Error("Sparse vector is empty");
-    }
-
-    console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${RETRIEVAL_LIMIT}`);
-    let res;
-    try {
-        res = await qdrantClient.query(COLLECTION, {
-            prefetch: [
-                {
-                    query: denseQuery,
-                    using: "dense",
+    return startActiveObservation(
+        "hybrid-retrieve",
+        async (retriever) => {
+            retriever.update({
+                input: { query: truncateForTrace(query, 500) },
+                metadata: {
+                    collection: COLLECTION,
                     limit: RETRIEVAL_LIMIT,
+                    fusion: "rrf",
                 },
-                {
-                    query: sparseQuery,
-                    using: "splade",
+            });
+
+            console.log(`[hybridRetrieve] Starting retrieval for query: "${query.slice(0, 120)}"`);
+            const [denseVectors, sparseVectors] = await Promise.all([
+                getDenseVectors([query]),
+                getSparseVectors([query]),
+            ]);
+            console.log(`[hybridRetrieve] Dense vector dims: ${denseVectors[0]?.length ?? 0}, Sparse vector nnz: ${sparseVectors[0]?.indices?.length ?? 0}`);
+
+            const denseVector = denseVectors[0];
+            const sparse = sparseVectors[0];
+
+            if (!denseVector || !sparse) {
+                console.error("[hybridRetrieve] Failed to embed query — no vectors returned");
+                throw new Error("Failed to embed query");
+            }
+
+            // Build sparse query — ensure sorted indices (Qdrant requires ascending order)
+            const rawIndices = Array.from(sparse.indices as Iterable<number>);
+            const rawValues = Array.from(sparse.values as Iterable<number>);
+            const paired = rawIndices.map((idx, i) => ({ idx, val: rawValues[i] ?? 0 }))
+                .filter(p => p.val !== 0)
+                .sort((a, b) => a.idx - b.idx);
+            const sparseQuery = {
+                indices: paired.map(p => p.idx),
+                values: paired.map(p => p.val),
+            };
+
+            const denseQuery = Array.from(denseVector as ArrayLike<number>);
+
+            // Validate vectors before sending to Qdrant
+            if (denseQuery.some(v => !Number.isFinite(v))) {
+                console.error("[hybridRetrieve] Dense vector contains NaN or Infinity");
+                throw new Error("Dense vector contains invalid values");
+            }
+            if (sparseQuery.indices.length === 0) {
+                console.error("[hybridRetrieve] Sparse vector has no non-zero entries");
+                throw new Error("Sparse vector is empty");
+            }
+
+            console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${RETRIEVAL_LIMIT}`);
+            let res;
+            try {
+                res = await qdrantClient.query(COLLECTION, {
+                    prefetch: [
+                        {
+                            query: denseQuery,
+                            using: "dense",
+                            limit: RETRIEVAL_LIMIT,
+                        },
+                        {
+                            query: sparseQuery,
+                            using: "splade",
+                            limit: RETRIEVAL_LIMIT,
+                        },
+                    ],
+                    query: { fusion: "rrf" },
                     limit: RETRIEVAL_LIMIT,
+                    with_payload: true,
+                });
+            } catch (qdrantErr: any) {
+                console.error(`[hybridRetrieve] Qdrant query failed:`, {
+                    message: qdrantErr.message,
+                    status: qdrantErr.status,
+                    statusText: qdrantErr.statusText,
+                    data: JSON.stringify(qdrantErr.data),
+                });
+                throw qdrantErr;
+            }
+
+            const chunks = (res.points ?? []).map((point) => {
+                const payload = (point.payload ?? {}) as Record<string, unknown>;
+                return {
+                    id: String(point.id),
+                    text: typeof payload.text === "string" ? payload.text : "",
+                    score: point.score ?? 0,
+                    documentId: (payload.documentId as string | number | undefined) ?? null,
+                };
+            }).filter((c) => c.text.length > 0);
+
+            console.log(`[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} chunks with text`);
+
+            retriever.update({
+                output: {
+                    chunkCount: chunks.length,
+                    topScores: chunks.slice(0, 5).map((c) => ({
+                        id: c.id,
+                        score: c.score,
+                    })),
                 },
-            ],
-            query: { fusion: "rrf" },
-            limit: RETRIEVAL_LIMIT,
-            with_payload: true,
-        });
-    } catch (qdrantErr: any) {
-        console.error(`[hybridRetrieve] Qdrant query failed:`, {
-            message: qdrantErr.message,
-            status: qdrantErr.status,
-            statusText: qdrantErr.statusText,
-            data: JSON.stringify(qdrantErr.data),
-        });
-        throw qdrantErr;
-    }
+            });
 
-    const chunks = (res.points ?? []).map((point) => {
-        const payload = (point.payload ?? {}) as Record<string, unknown>;
-        return {
-            id: String(point.id),
-            text: typeof payload.text === "string" ? payload.text : "",
-            score: point.score ?? 0,
-            documentId: (payload.documentId as string | number | undefined) ?? null,
-        };
-    }).filter((c) => c.text.length > 0);
-
-    console.log(`[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} chunks with text`);
-    return chunks;
+            return chunks;
+        },
+        { asType: "retriever" }
+    );
 }
 
 async function buildSystemPrompt(
@@ -384,6 +418,8 @@ async function summarizeChat(currentSummary: string | null, messages: Message[],
         chatHistory += `role: ${m.role}\n` + `\ncontent: ${m.content}\n\n`;
     }
 
+    const summaryModel = CHAT_MODEL;
+
     const summaryPrompt = isFirst ? `You are summarizing a conversation for future AI context.
         Your goal is to produce a concise summary that helps another AI continue the conversation without reading the full transcript.
 
@@ -427,13 +463,31 @@ async function summarizeChat(currentSummary: string | null, messages: Message[],
         ${chatHistory}
     `
 
-    const response = await openrouterClient.chat.send({
-        chatRequest: {
-            messages: [{role: "user", content: summaryPrompt}]
+    const summary = await withGeneration(
+        isFirst ? "summarize-chat" : "summarize-chat-chunk",
+        {
+            model: summaryModel,
+            input: {
+                isFirst,
+                messageCount: messages.length,
+                promptPreview: truncateForTrace(summaryPrompt, 800),
+            },
+            metadata: { feature: "chat-summary" },
+        },
+        async () => {
+            const response = await openrouterClient.chat.send({
+                chatRequest: {
+                    model: summaryModel,
+                    messages: [{ role: "user", content: summaryPrompt }],
+                },
+            });
+            const content = response.choices[0]?.message.content ?? "";
+            return {
+                output: content,
+                usage: (response as { usage?: OpenRouterUsageLike }).usage,
+            };
         }
-    });
-
-    const summary = response.choices[0]?.message.content;
+    );
 
     if(!isFirst){
         const mergePrompt = `The following are summaries of different sections of the same conversation.
@@ -458,13 +512,30 @@ async function summarizeChat(currentSummary: string | null, messages: Message[],
             ${summary}
         `
 
-        const mergedSummary = await openrouterClient.chat.send({
-            chatRequest: {
-                messages: [{role: "user", content: mergePrompt}]
+        return withGeneration(
+            "merge-chat-summary",
+            {
+                model: summaryModel,
+                input: {
+                    previousSummary: truncateForTrace(currentSummary ?? "", 500),
+                    latestSummary: truncateForTrace(summary, 500),
+                },
+                metadata: { feature: "chat-summary" },
+            },
+            async () => {
+                const mergedSummary = await openrouterClient.chat.send({
+                    chatRequest: {
+                        model: summaryModel,
+                        messages: [{ role: "user", content: mergePrompt }],
+                    },
+                });
+                const content = mergedSummary.choices[0]?.message.content ?? "";
+                return {
+                    output: content,
+                    usage: (mergedSummary as { usage?: OpenRouterUsageLike }).usage,
+                };
             }
-        });
-
-        return mergedSummary.choices[0]?.message.content;
+        );
     }
 
     return summary;
@@ -551,20 +622,50 @@ chatRouter.post("/message", async (req, res) => {
         }
 
         const projectSystemPrompt = chat.project?.systemPrompt ?? null;
+        const resolvedChat = chat;
 
+        // Root trace for the full turn — session groups multi-turn chats in Langfuse
+        await startActiveObservation("chat-message", async (rootSpan) => {
+            rootSpan.update({
+                input: {
+                    message: truncateForTrace(webMode ? webQuery : message, 1_000),
+                    mode: webMode ? "web" : "memory",
+                    isNewSession,
+                },
+                metadata: {
+                    chatId: resolvedChat.id,
+                    projectId: resolvedChat.projectId ?? null,
+                },
+            });
+
+            await propagateAttributes(
+                {
+                    userId,
+                    sessionId: resolvedChat.id,
+                    tags: [
+                        "chat",
+                        webMode ? "web" : "memory",
+                        isNewSession ? "new-session" : "continue-session",
+                    ],
+                    metadata: {
+                        feature: webMode ? "web-agent" : "rag-chat",
+                        projectId: resolvedChat.projectId ?? "",
+                    },
+                },
+                async () => {
         // 2. Persist user message
-        console.log(`[POST /message] Step 2 — Persisting user message in chat ${chat.id}`);
+        console.log(`[POST /message] Step 2 — Persisting user message in chat ${resolvedChat.id}`);
         const userMessage = await prismaClient.message.create({
             data: {
-                chatId: chat.id,
+                chatId: resolvedChat.id,
                 role: "user",
                 content: message,
             },
         });
         console.log(`[POST /message] User message persisted: id=${userMessage.id}`);
 
-        const shouldSetTitle = isNewSession || chat.title === "New chat";
-        const title = shouldSetTitle ? titleFromMessage(titleSeed) : chat.title;
+        const shouldSetTitle = isNewSession || resolvedChat.title === "New chat";
+        const title = shouldSetTitle ? titleFromMessage(titleSeed) : resolvedChat.title;
 
         // ── /web path: Exa + LangGraph agent (SSE, same shape as normal chat) ──
         if (webMode) {
@@ -573,7 +674,7 @@ chatRouter.post("/message", async (req, res) => {
 
             writeSse(res, {
                 type: "meta",
-                chatId: chat.id,
+                chatId: resolvedChat.id,
                 title,
                 isNewSession,
                 mode: "web",
@@ -594,7 +695,7 @@ chatRouter.post("/message", async (req, res) => {
             let clientClosed = false;
             req.on("close", () => {
                 clientClosed = true;
-                console.log(`[POST /message] Client disconnected during web agent for chat ${chat.id}`);
+                console.log(`[POST /message] Client disconnected during web agent for chat ${resolvedChat.id}`);
             });
 
             let assistantText = "";
@@ -609,7 +710,11 @@ chatRouter.post("/message", async (req, res) => {
             let streamFailed = false;
 
             try {
-                const agentResult = await runWebSearchAgent(webQuery, async (event) => {
+                const agentResult = await runWebSearchAgent(webQuery, {
+                    userId,
+                    sessionId: resolvedChat.id,
+                    tags: ["chat"],
+                    onEvent: async (event) => {
                     if (clientClosed || res.writableEnded) return;
 
                     const statusMessage =
@@ -641,6 +746,7 @@ chatRouter.post("/message", async (req, res) => {
                         reasoning: event.reasoning,
                         nextQuery: event.nextQuery,
                     });
+                    },
                 });
 
                 assistantText = agentResult.answer;
@@ -688,6 +794,10 @@ chatRouter.post("/message", async (req, res) => {
             if (!assistantText.trim()) {
                 if (streamFailed) {
                     if (!res.writableEnded) res.end();
+                    rootSpan.update({
+                        level: "ERROR",
+                        output: { error: "web-agent-failed" },
+                    });
                     return;
                 }
                 assistantText = "I couldn't find enough information on the web to answer that.";
@@ -698,7 +808,7 @@ chatRouter.post("/message", async (req, res) => {
 
             const assistantMessage = await prismaClient.message.create({
                 data: {
-                    chatId: chat.id,
+                    chatId: resolvedChat.id,
                     role: "assistant",
                     content: assistantText,
                     sourceChunks: sources,
@@ -706,7 +816,7 @@ chatRouter.post("/message", async (req, res) => {
             });
 
             await prismaClient.chat.update({
-                where: { id: chat.id },
+                where: { id: resolvedChat.id },
                 data: {
                     updatedAt: new Date(),
                     ...(shouldSetTitle ? { title } : {}),
@@ -716,7 +826,7 @@ chatRouter.post("/message", async (req, res) => {
             if (!clientClosed && !res.writableEnded && !streamFailed) {
                 writeSse(res, {
                     type: "done",
-                    chatId: chat.id,
+                    chatId: resolvedChat.id,
                     title,
                     isNewSession,
                     mode: "web",
@@ -736,7 +846,14 @@ chatRouter.post("/message", async (req, res) => {
                 });
             }
             if (!res.writableEnded) res.end();
-            console.log(`[POST /message] Web agent done for chat ${chat.id}`);
+            rootSpan.update({
+                output: {
+                    mode: "web",
+                    answer: truncateForTrace(assistantText, 2_000),
+                    sourceCount: sources.length,
+                },
+            });
+            console.log(`[POST /message] Web agent done for chat ${resolvedChat.id}`);
             return;
         }
 
@@ -747,10 +864,29 @@ chatRouter.post("/message", async (req, res) => {
 
         // 4. Cross-encoder rerank → top 5
         console.log(`[POST /message] Step 4 — Cross-encoder rerank (top ${RERANK_TOP_K})`);
-        const topChunks = await crossEncodeRerank(
-            message,
-            fusedChunks.map((c) => ({ id: c.id, text: c.text, score: c.score })),
-            RERANK_TOP_K
+        const topChunks = await startActiveObservation(
+            "cross-encode-rerank",
+            async (span) => {
+                span.update({
+                    input: {
+                        query: truncateForTrace(message, 300),
+                        candidateCount: fusedChunks.length,
+                        topK: RERANK_TOP_K,
+                    },
+                });
+                const ranked = await crossEncodeRerank(
+                    message,
+                    fusedChunks.map((c) => ({ id: c.id, text: c.text, score: c.score })),
+                    RERANK_TOP_K
+                );
+                span.update({
+                    output: {
+                        resultCount: ranked.length,
+                        topScores: ranked.map((c) => ({ id: c.id, score: c.score })),
+                    },
+                });
+                return ranked;
+            }
         );
         console.log(`[POST /message] Rerank returned ${topChunks.length} chunks`);
 
@@ -758,14 +894,14 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] Step 5 — Loading history (last 20 messages)`);
         const history =
         (await prismaClient.message.findMany({
-            where: { chatId: chat.id },
+            where: { chatId: resolvedChat.id },
             orderBy: { createdAt: "desc" },
             take: 20,
         })).reverse();
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
         const llmMessages = [
-            { role: "system" as const, content: await buildSystemPrompt(userId, chat.id, topChunks, projectSystemPrompt, userAgent) },
+            { role: "system" as const, content: await buildSystemPrompt(userId, resolvedChat.id, topChunks, projectSystemPrompt, userAgent) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
                 content: m.content,
@@ -785,7 +921,7 @@ chatRouter.post("/message", async (req, res) => {
 
         writeSse(res, {
             type: "meta",
-            chatId: chat.id,
+            chatId: resolvedChat.id,
             title,
             isNewSession,
             mode: "memory",
@@ -801,7 +937,7 @@ chatRouter.post("/message", async (req, res) => {
         let clientClosed = false;
         req.on("close", () => {
             clientClosed = true;
-            console.log(`[POST /message] Client disconnected mid-stream for chat ${chat.id}`);
+            console.log(`[POST /message] Client disconnected mid-stream for chat ${resolvedChat.id}`);
         });
 
         console.log(`[POST /message] Step 6 — Streaming OpenRouter model=${CHAT_MODEL}`);
@@ -810,27 +946,58 @@ chatRouter.post("/message", async (req, res) => {
 
         let streamFailed = false;
         try {
-            const llmStream = await openrouterClient.chat.send({
-                chatRequest: {
+            assistantText = await withStreamingGeneration(
+                "generate-response",
+                {
                     model: CHAT_MODEL,
-                    messages: llmMessages,
-                    stream: true,
+                    input: {
+                        message: truncateForTrace(message, 1_000),
+                        historyTurns: history.length,
+                        contextChunks: topChunks.length,
+                    },
+                    metadata: {
+                        messageCount: llmMessages.length,
+                        feature: "rag-chat",
+                    },
                 },
-            });
+                async ({ noteCompletionStart }) => {
+                    const llmStream = await openrouterClient.chat.send({
+                        chatRequest: {
+                            model: CHAT_MODEL,
+                            messages: llmMessages,
+                            stream: true,
+                        },
+                    });
 
-            for await (const chunk of llmStream) {
-                if (clientClosed) break;
+                    let text = "";
+                    let usage: OpenRouterUsageLike | null = null;
+                    let firstToken = false;
 
-                if (chunk.error) {
-                    throw new Error(chunk.error.message || "OpenRouter stream error");
+                    for await (const chunk of llmStream) {
+                        if (clientClosed) break;
+
+                        if (chunk.error) {
+                            throw new Error(chunk.error.message || "OpenRouter stream error");
+                        }
+
+                        if (chunk.usage) {
+                            usage = chunk.usage as OpenRouterUsageLike;
+                        }
+
+                        const delta = chunk.choices?.[0]?.delta?.content;
+                        if (typeof delta === "string" && delta.length > 0) {
+                            if (!firstToken) {
+                                firstToken = true;
+                                noteCompletionStart();
+                            }
+                            text += delta;
+                            writeSse(res, { type: "delta", content: delta });
+                        }
+                    }
+
+                    return { output: text, usage };
                 }
-
-                const delta = chunk.choices?.[0]?.delta?.content;
-                if (typeof delta === "string" && delta.length > 0) {
-                    assistantText += delta;
-                    writeSse(res, { type: "delta", content: delta });
-                }
-            }
+            );
         } catch (streamErr) {
             streamFailed = true;
             console.error(`[POST /message] OpenRouter stream error:`, streamErr);
@@ -854,6 +1021,10 @@ chatRouter.post("/message", async (req, res) => {
         if (!assistantText.trim()) {
             if (streamFailed) {
                 if (!res.writableEnded) res.end();
+                rootSpan.update({
+                    level: "ERROR",
+                    output: { error: "stream-failed" },
+                });
                 return;
             }
             assistantText = "I couldn't generate a response. Please try again.";
@@ -862,10 +1033,10 @@ chatRouter.post("/message", async (req, res) => {
             }
         }
 
-        console.log(`[POST /message] Persisting assistant message in chat ${chat.id}`);
+        console.log(`[POST /message] Persisting assistant message in chat ${resolvedChat.id}`);
         const assistantMessage = await prismaClient.message.create({
             data: {
-                chatId: chat.id,
+                chatId: resolvedChat.id,
                 role: "assistant",
                 content: assistantText,
                 sourceChunks: sources,
@@ -875,7 +1046,7 @@ chatRouter.post("/message", async (req, res) => {
 
         console.log(`[POST /message] Bumping updatedAt (setTitle=${shouldSetTitle})`);
         const msgs = await prismaClient.chat.update({
-            where: { id: chat.id },
+            where: { id: resolvedChat.id },
             data: {
                 updatedAt: new Date(),
                 ...(shouldSetTitle ? { title } : {}),
@@ -886,7 +1057,7 @@ chatRouter.post("/message", async (req, res) => {
         if (!clientClosed && !res.writableEnded && !streamFailed) {
             writeSse(res, {
                 type: "done",
-                chatId: chat.id,
+                chatId: resolvedChat.id,
                 title,
                 isNewSession,
                 mode: "memory",
@@ -906,13 +1077,27 @@ chatRouter.post("/message", async (req, res) => {
             });
         }
         if (!res.writableEnded) res.end();
-        console.log(`[POST /message] Done — stream completed for chat ${chat.id}`);
+        console.log(`[POST /message] Done — stream completed for chat ${resolvedChat.id}`);
+
+        rootSpan.update({
+            output: {
+                mode: "memory",
+                answer: truncateForTrace(assistantText, 2_000),
+                sourceCount: sources.length,
+                durationMs: llmDuration,
+            },
+            metadata: {
+                model: CHAT_MODEL,
+                retrievedChunks: fusedChunks.length,
+                rerankedChunks: topChunks.length,
+            },
+        });
 
         // Summarize in the background after the client has the full answer
         if (streamFailed) return;
         try {
             const messagesToSummarize = await prismaClient.message.findMany({
-                where: { chatId: chat.id },
+                where: { chatId: resolvedChat.id },
                 orderBy: { createdAt: "asc" },
                 skip: msgs.lastSummaryCount,
             });
@@ -923,7 +1108,7 @@ chatRouter.post("/message", async (req, res) => {
                 const summary = await summarizeChat(msgs.summary, messagesToSummarize, isFirst);
 
                 await prismaClient.chat.update({
-                    where: { userId, id: chat.id },
+                    where: { userId, id: resolvedChat.id },
                     data: {
                         summary,
                         lastSummaryCount: msgs.lastSummaryCount + messagesToSummarize.length,
@@ -933,6 +1118,9 @@ chatRouter.post("/message", async (req, res) => {
         } catch (summaryErr) {
             console.error(`[POST /message] Summary update failed:`, summaryErr);
         }
+                }
+            );
+        });
     } catch (e) {
         console.error(`[POST /message] Pipeline error:`, e);
         if (res.headersSent) {

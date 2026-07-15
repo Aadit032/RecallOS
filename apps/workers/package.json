@@ -18,6 +18,7 @@
     "@repo/minio": "*",
     "@repo/openrouter": "*",
     "@repo/embed": "*",
+    "@repo/langfuse": "*",
     "@repo/prisma": "*",
     "@repo/qdrant": "*",
     "@repo/redis-stream": "*",

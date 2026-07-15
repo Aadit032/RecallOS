@@ -1,3 +1,9 @@
+import dotenv from "dotenv";
+dotenv.config();
+
+import { initTracing, startActiveObservation, withGeneration, propagateAttributes, truncateForTrace, type OpenRouterUsageLike } from "@repo/langfuse/client";
+initTracing({ serviceName: "workers" });
+
 import { xAck, xReadGroup, xAutoClaim, xPendingRange } from "@repo/redis-stream/client"
 import LlamaCloud from '@llamaindex/llama-cloud'; 
 import { createParseJob, getFinishedJob } from "./parse";
@@ -7,8 +13,6 @@ import { getDenseVectors, getSparseVectors } from "@repo/embed/client";
 import { openrouterClient } from "@repo/openrouter/client"
 import { qdrantClient } from "@repo/qdrant/client";
 import { v4 as uuidv4 } from "uuid"
-import dotenv from "dotenv"
-dotenv.config();
 
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
@@ -90,7 +94,13 @@ async function workers(){
 }
 
 async function getContextChunks(chunks: Chunk[], full_doc: string): Promise<Chunk[]>{
-    const contextualized = await Promise.all(chunks.map(async (chunk) => {
+    return startActiveObservation("contextualize-chunks", async (span) => {
+        span.update({
+            input: { chunkCount: chunks.length, docChars: full_doc.length },
+            metadata: { model: CONTEXT_MODEL },
+        });
+
+        const contextualized = await Promise.all(chunks.map(async (chunk) => {
             const CONTEXT_PROMPT =`<document> 
                 ${full_doc}
                 </document> 
@@ -102,22 +112,47 @@ async function getContextChunks(chunks: Chunk[], full_doc: string): Promise<Chun
                 chunk within the overall document for the purposes of improving search retrieval of the chunk. 
                 Answer only with the succinct context and nothing else.`
 
-            const response = await openrouterClient.chat.send({
-                chatRequest: {
-                    model: CONTEXT_MODEL,
-                    messages: [{ role: 'user', content: CONTEXT_PROMPT }],
+            try {
+                const content = await withGeneration(
+                    "contextualize-chunk",
+                    {
+                        model: CONTEXT_MODEL,
+                        input: {
+                            chunkId: chunk.id,
+                            chunkPreview: truncateForTrace(chunk.text, 300),
+                        },
+                        metadata: { feature: "contextual-retrieval" },
+                    },
+                    async () => {
+                        const response = await openrouterClient.chat.send({
+                            chatRequest: {
+                                model: CONTEXT_MODEL,
+                                messages: [{ role: 'user', content: CONTEXT_PROMPT }],
+                            }
+                        });
+                        const text = response?.choices[0]?.message.content ?? "";
+                        return {
+                            output: text,
+                            usage: (response as { usage?: OpenRouterUsageLike }).usage,
+                        };
+                    }
+                );
+
+                if (!content) {
+                    console.log("No response from openrouter for contextual retrieval on chunk; keeping original text.");
+                    return chunk;
                 }
-            })
-            const content = response?.choices[0]?.message.content;
-            if (!content) {
-                console.log("No response from openrouter for contextual retrieval on chunk; keeping original text.");
+
+                return { ...chunk, text: content };
+            } catch (e) {
+                console.log("Contextual retrieval failed for chunk; keeping original text.", e);
                 return chunk;
             }
-    
-            return { ...chunk, text: content };
         }));
- 
-    return contextualized;
+
+        span.update({ output: { chunkCount: contextualized.length } });
+        return contextualized;
+    });
 }
 
 async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<Chunk[]>{
@@ -149,13 +184,29 @@ async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<C
             Document:
             ${full_doc}`
 
-        const res = await openrouterClient.chat.send({
-            chatRequest: {
+        const summary = await withGeneration(
+            "summarize-document",
+            {
                 model: CONTEXT_MODEL,
-                messages: [{ role: 'user', content: SUMMARY_PROMPT }],
+                input: {
+                    docChars: full_doc.length,
+                    promptPreview: truncateForTrace(SUMMARY_PROMPT, 500),
+                },
+                metadata: { feature: "contextual-retrieval" },
+            },
+            async () => {
+                const res = await openrouterClient.chat.send({
+                    chatRequest: {
+                        model: CONTEXT_MODEL,
+                        messages: [{ role: 'user', content: SUMMARY_PROMPT }],
+                    }
+                });
+                return {
+                    output: res.choices[0]?.message.content ?? "",
+                    usage: (res as { usage?: OpenRouterUsageLike }).usage,
+                };
             }
-        });
-        const summary = res.choices[0]!.message.content;
+        );
         if (!summary) {
             console.log("No summary returned from openrouter; falling back to full document for context.");
             return await getContextChunks(chunks, full_doc);
@@ -174,56 +225,92 @@ async function documentStillExists(documentId: string): Promise<boolean> {
 }
 
 async function upsertChunks(chunks: Chunk[], documentId: string): Promise<Boolean> {
-    const texts = chunks.map(chunk => chunk.text)
+    return startActiveObservation(
+        "embed-and-upsert",
+        async (span) => {
+            span.update({
+                input: { documentId, chunkCount: chunks.length },
+                metadata: { collection: COLLECTION },
+            });
 
-    try{
-        const sparseVectors = await getSparseVectors(texts);
-        const embeddings = await getDenseVectors(texts);
+            const texts = chunks.map(chunk => chunk.text)
 
-        // console.log("sparseVectors", sparseVectors);
-        // console.log("embeddings", embeddings);
+            try{
+                const sparseVectors = await startActiveObservation(
+                    "sparse-embed",
+                    async (emb) => {
+                        emb.update({ input: { count: texts.length }, model: "splade-pp-en-v1" });
+                        const vectors = await getSparseVectors(texts);
+                        emb.update({ output: { count: vectors.length } });
+                        return vectors;
+                    },
+                    { asType: "embedding" }
+                );
+                const embeddings = await startActiveObservation(
+                    "dense-embed",
+                    async (emb) => {
+                        emb.update({ input: { count: texts.length }, model: "bge-small-en" });
+                        const vectors = await getDenseVectors(texts);
+                        emb.update({
+                            output: {
+                                count: vectors.length,
+                                dims: vectors[0]?.length ?? 0,
+                            },
+                        });
+                        return vectors;
+                    },
+                    { asType: "embedding" }
+                );
 
-        console.dir(sparseVectors[0], { depth: null });
-        console.log("checking embedding size before upsert: ", embeddings[0]!.length);
+                console.dir(sparseVectors[0], { depth: null });
+                console.log("checking embedding size before upsert: ", embeddings[0]!.length);
 
-        const points = chunks.map((chunk, i) => ({
-            id: uuidv4(),
-            vector: {
-                dense: Array.from(embeddings[i]!),
-                splade: {
-                    indices: Array.from(sparseVectors[i]!.indices),
-                    values: Array.from(sparseVectors[i]!.values),
-                },
-            },
-            payload: {
-                text: chunk.text,
-                documentId,
-                chunkIndex: chunk.id,
+                const points = chunks.map((chunk, i) => ({
+                    id: uuidv4(),
+                    vector: {
+                        dense: Array.from(embeddings[i]!),
+                        splade: {
+                            indices: Array.from(sparseVectors[i]!.indices),
+                            values: Array.from(sparseVectors[i]!.values),
+                        },
+                    },
+                    payload: {
+                        text: chunk.text,
+                        documentId,
+                        chunkIndex: chunk.id,
+                    }
+                }));
+
+                console.log(points[0], { depth: null });
+
+                await qdrantClient.upsert(COLLECTION, { wait: true, points });
+                console.log("points have been upserted to qdrant!!")
+                span.update({ output: { upserted: points.length, success: true } });
+                return true;
+            }catch (e: any) {
+                console.dir(e, { depth: null });
+
+                console.log("====== RESPONSE ======");
+                console.dir(e.response, { depth: null });
+
+                console.log("====== DATA ======");
+                console.dir(e.response?.data, { depth: null });
+
+                console.log("====== BODY ======");
+                console.dir(e.response?.body, { depth: null });
+
+                console.log("====== STATUS ======");
+                console.dir(e.data?.status, { depth: null });
+
+                span.update({
+                    level: "ERROR",
+                    statusMessage: e instanceof Error ? e.message : String(e),
+                    output: { success: false },
+                });
+                return false;
             }
-        }));
-
-        console.log(points[0], { depth: null });
-
-        await qdrantClient.upsert(COLLECTION, { wait: true, points });
-        console.log("points have been upserted to qdrant!!")
-        return true;
-    }catch (e: any) {
-        console.dir(e, { depth: null });
-
-        console.log("====== RESPONSE ======");
-        console.dir(e.response, { depth: null });
-
-        console.log("====== DATA ======");
-        console.dir(e.response?.data, { depth: null });
-
-        console.log("====== BODY ======");
-        console.dir(e.response?.body, { depth: null });
-
-        console.log("====== STATUS ======");
-        console.dir(e.data?.status, { depth: null });
-
-        return false;
-    }
+        }
+    );
 }
 
 // parse => chunk => enrich context => get embeddings => store in vector db + splade index
@@ -231,6 +318,27 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
     console.log("streamMessage: ", streamMessage);
     const documentId = streamMessage.message.documentId;
 
+    return startActiveObservation(
+        "process-document",
+        async (root) => {
+            root.update({
+                input: {
+                    documentId,
+                    streamId: streamMessage.id,
+                    pricingTier,
+                },
+            });
+
+            return propagateAttributes(
+                {
+                    tags: ["ingest", "document-pipeline", pricingTier],
+                    metadata: {
+                        documentId,
+                        workerId: WORKER_ID ?? "",
+                        feature: "document-ingest",
+                    },
+                },
+                async () => {
     try{
         // Skip if document was deleted before we started
         const existing = await prismaClient.document.findUnique({
@@ -239,6 +347,7 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         });
         if (!existing) {
             console.log(`[processDocuments] Document ${documentId} no longer exists — skipping`);
+            root.update({ output: { skipped: true, reason: "deleted" } });
             return;
         }
 
@@ -257,30 +366,47 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         else if(pricingTier == "max") tier = "agentic";
         else tier = "agentic_plus";
 
-        for(let i = 0; i < MAX_RETRIES; i++){
-            if (!(await documentStillExists(documentId))) {
-                console.log(`[processDocuments] Document ${documentId} deleted during parse — aborting`);
-                return;
-            }
-            try{
-                const job = await createParseJob(document.ObjectKey, tier, "dev");
-                if(!job) {
-                    console.log("Failed to create a parsing job...");
+        await startActiveObservation("parse-document", async (parseSpan) => {
+            parseSpan.update({
+                input: { objectKey: document.ObjectKey, tier },
+            });
+
+            for(let i = 0; i < MAX_RETRIES; i++){
+                if (!(await documentStillExists(documentId))) {
+                    console.log(`[processDocuments] Document ${documentId} deleted during parse — aborting`);
+                    parseSpan.update({ output: { aborted: true, reason: "deleted" } });
                     return;
                 }
+                try{
+                    const job = await createParseJob(document.ObjectKey, tier, "dev");
+                    if(!job) {
+                        console.log("Failed to create a parsing job...");
+                        parseSpan.update({ level: "ERROR", output: { error: "job-create-failed" } });
+                        return;
+                    }
 
-                markdown = await getFinishedJob(job);
+                    markdown = await getFinishedJob(job);
 
-                if (markdown) break;
-                else if(typeof markdown == null) break;
+                    if (markdown) {
+                        parseSpan.update({
+                            output: {
+                                chars: markdown.length,
+                                attempts: i + 1,
+                            },
+                        });
+                        break;
+                    }
+                    else if(typeof markdown == null) break;
 
-                console.log(`Attempt ${i + 1} failed. Retrying...`);
+                    console.log(`Attempt ${i + 1} failed. Retrying...`);
 
-                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-            }catch(e){
-                console.log("Error while getting parsed response from Llama: ", e);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                }catch(e){
+                    console.log("Error while getting parsed response from Llama: ", e);
+                }
             }
-        }
+        });
+
         if(!markdown){
             if (await documentStillExists(documentId)) {
                 await prismaClient.document.update({
@@ -289,16 +415,28 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
                 });
             }
             console.log("Max attempts reached.");
+            root.update({
+                level: "ERROR",
+                output: { status: "FAILED", reason: "parse-failed" },
+            });
             return;
         }
 
         if (!(await documentStillExists(documentId))) {
             console.log(`[processDocuments] Document ${documentId} deleted after parse — aborting`);
+            root.update({ output: { skipped: true, reason: "deleted-after-parse" } });
             return;
         }
 
         // Chunk the parsed document
-        let chunks: Chunk[] = chunkMarkdown(markdown);
+        let chunks: Chunk[] = await startActiveObservation("chunk-document", async (chunkSpan) => {
+            const result = chunkMarkdown(markdown!);
+            chunkSpan.update({
+                input: { markdownChars: markdown!.length },
+                output: { chunkCount: result.length },
+            });
+            return result;
+        });
 
         console.log("Number of chunks: ", chunks.length);
         console.log("Example chunk text: ", chunks[0]!.text);
@@ -310,6 +448,7 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 
         if (!(await documentStillExists(documentId))) {
             console.log(`[processDocuments] Document ${documentId} deleted before upsert — aborting`);
+            root.update({ output: { skipped: true, reason: "deleted-before-upsert" } });
             return;
         }
 
@@ -321,10 +460,16 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
                 data: { status: "FAILED" }  
             });
             console.log(`[processDocuments] Document ${documentId} could not be upserted — marking as FAILED`);
+            root.update({
+                level: "ERROR",
+                output: { status: "FAILED", reason: "upsert-failed", chunkCount: chunks.length },
+            });
+            return;
         }
 
         if (!(await documentStillExists(documentId))) {
             console.log(`[processDocuments] Document ${documentId} deleted after upsert — not marking COMPLETED`);
+            root.update({ output: { skipped: true, reason: "deleted-after-upsert" } });
             return;
         }
 
@@ -333,9 +478,27 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
             data: { status: "COMPLETED" }
         });
 
+        root.update({
+            output: {
+                status: "COMPLETED",
+                chunkCount: chunks.length,
+                pricingTier,
+            },
+        });
+
     }catch(e){
         console.log("Failed processing documents. Error: ", e instanceof Error? e.message : e);
+        root.update({
+            level: "ERROR",
+            statusMessage: e instanceof Error ? e.message : String(e),
+            output: { status: "ERROR" },
+        });
     }
+                }
+            );
+        },
+        { asType: "chain" }
+    );
 }
 
 // ========== RUN WORKERS ============

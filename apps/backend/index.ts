@@ -1,15 +1,20 @@
+import dotenv from "dotenv";
+dotenv.config();
+
+// Initialize Langfuse OpenTelemetry before any LLM / agent imports run.
+import { initTracing } from "@repo/langfuse/client";
+initTracing({ serviceName: "backend" });
+
 import cors from "cors";
-import uploadRouter from "./routers/uploadRouter.ts"
-import authRouter from "./routers/authRouter.ts"
+import uploadRouter from "./routers/uploadRouter.ts";
+import authRouter from "./routers/authRouter.ts";
 import chatRouter from "./routers/chatRouter.ts";
 import projectRouter from "./routers/projectRouter.ts";
-import express from "express"
-import dotenv from "dotenv"
+import express from "express";
 import middleware from "./middleware.ts";
 import downloadRouter from "./routers/downloadRouter.ts";
-dotenv.config()
 
-const PORT = process.env.PORT
+const PORT = process.env.PORT;
 
 const app = express();
 app.use(cors());

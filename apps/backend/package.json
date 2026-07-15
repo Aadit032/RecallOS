@@ -21,6 +21,7 @@
     "@langchain/openrouter": "^0.4.5",
     "@llamaindex/llama-cloud": "^2.10.0",
     "@repo/embed": "*",
+    "@repo/langfuse": "*",
     "@repo/minio": "*",
     "@repo/openrouter": "*",
     "@repo/prisma": "*",

@@ -4,6 +4,11 @@ import { ChatOpenRouter } from "@langchain/openrouter";
 import { ReasoningSchema } from "../types";
 import type { z } from "zod";
 import dotenv from "dotenv";
+import {
+    createLangChainHandler,
+    startActiveObservation,
+    truncateForTrace,
+} from "@repo/langfuse/client";
 
 dotenv.config();
 
@@ -230,17 +235,34 @@ export const webGraph = new StateGraph(WebState)
     .addEdge("write_answer", END)
     .compile();
 
+export type RunWebSearchAgentOptions = {
+    onEvent?: (event: WebAgentProgressEvent) => void | Promise<void>;
+    /** Langfuse / analytics context from the chat request */
+    userId?: string;
+    sessionId?: string;
+    tags?: string[];
+};
+
 /**
  * Run the web research agent, optionally streaming graph progress via onEvent.
+ * Traced as a Langfuse `agent` observation; LangGraph LLM steps use CallbackHandler.
  */
 export async function runWebSearchAgent(
     query: string,
-    onEvent?: (event: WebAgentProgressEvent) => void | Promise<void>
+    onEventOrOptions?:
+        | ((event: WebAgentProgressEvent) => void | Promise<void>)
+        | RunWebSearchAgentOptions
 ): Promise<{
     answer: string;
     sources: WebSearchHit[];
     iterations: number;
 }> {
+    const options: RunWebSearchAgentOptions =
+        typeof onEventOrOptions === "function"
+            ? { onEvent: onEventOrOptions }
+            : (onEventOrOptions ?? {});
+    const onEvent = options.onEvent;
+
     const q = query.trim();
     if (!q) {
         return {
@@ -250,103 +272,136 @@ export async function runWebSearchAgent(
         };
     }
 
-    const input = {
-        query: q,
-        nextSearchQuery: q,
-        searchResults: [] as WebSearchHit[],
-        answer: "",
-        decision: null as Decision | null,
-        iteration: 0,
-    };
+    return startActiveObservation(
+        "web-research-agent",
+        async (agent) => {
+            agent.update({
+                input: { query: truncateForTrace(q, 500) },
+                metadata: {
+                    model: WEB_MODEL,
+                    maxIterations: MAX_ITERATIONS,
+                    resultsPerSearch: RESULTS_PER_SEARCH,
+                },
+            });
 
-    await onEvent?.({
-        type: "step",
-        step: "start",
-        title: "Starting web research agent",
-        detail: "Planning search → reason → answer loop",
-        query: q,
-    });
+            const input = {
+                query: q,
+                nextSearchQuery: q,
+                searchResults: [] as WebSearchHit[],
+                answer: "",
+                decision: null as Decision | null,
+                iteration: 0,
+            };
 
-    let activeQuery = q;
-    let answer = "";
-    const allSources: WebSearchHit[] = [];
-    let iterations = 0;
-
-    // Stream node-level updates so the UI can show each graph step live
-    const stream = await webGraph.stream(input, { streamMode: "updates" });
-
-    for await (const update of stream) {
-        if (update.do_search) {
-            const hits = (update.do_search.searchResults ?? []) as WebSearchHit[];
-            allSources.push(...hits);
             await onEvent?.({
                 type: "step",
-                step: "search",
-                title: "Searching the web",
-                query: activeQuery,
-                resultCount: hits.length,
-                detail:
-                    hits.length > 0
-                        ? `Found ${hits.length} result${hits.length === 1 ? "" : "s"} for “${activeQuery.slice(0, 80)}${activeQuery.length > 80 ? "…" : ""}”`
-                        : `No results for “${activeQuery.slice(0, 80)}”`,
-                iteration: iterations,
+                step: "start",
+                title: "Starting web research agent",
+                detail: "Planning search → reason → answer loop",
+                query: q,
             });
-        }
 
-        if (update.reason) {
-            const decision = update.reason.decision as Decision | null | undefined;
-            iterations = (update.reason.iteration as number | undefined) ?? iterations + 1;
-            if (typeof update.reason.nextSearchQuery === "string") {
-                activeQuery = update.reason.nextSearchQuery;
+            let activeQuery = q;
+            let answer = "";
+            const allSources: WebSearchHit[] = [];
+            let iterations = 0;
+
+            const langfuseHandler = createLangChainHandler({
+                userId: options.userId,
+                sessionId: options.sessionId,
+                tags: ["web-agent", "langgraph", ...(options.tags ?? [])],
+                traceMetadata: { model: WEB_MODEL },
+            });
+
+            // Stream node-level updates so the UI can show each graph step live
+            const stream = await webGraph.stream(input, {
+                streamMode: "updates",
+                callbacks: [langfuseHandler],
+            });
+
+            for await (const update of stream) {
+                if (update.do_search) {
+                    const hits = (update.do_search.searchResults ?? []) as WebSearchHit[];
+                    allSources.push(...hits);
+                    await onEvent?.({
+                        type: "step",
+                        step: "search",
+                        title: "Searching the web",
+                        query: activeQuery,
+                        resultCount: hits.length,
+                        detail:
+                            hits.length > 0
+                                ? `Found ${hits.length} result${hits.length === 1 ? "" : "s"} for “${activeQuery.slice(0, 80)}${activeQuery.length > 80 ? "…" : ""}”`
+                                : `No results for “${activeQuery.slice(0, 80)}”`,
+                        iteration: iterations,
+                    });
+                }
+
+                if (update.reason) {
+                    const decision = update.reason.decision as Decision | null | undefined;
+                    iterations = (update.reason.iteration as number | undefined) ?? iterations + 1;
+                    if (typeof update.reason.nextSearchQuery === "string") {
+                        activeQuery = update.reason.nextSearchQuery;
+                    }
+                    await onEvent?.({
+                        type: "step",
+                        step: "reason",
+                        title: decision?.enoughInformation
+                            ? "Results look sufficient"
+                            : "Need another search",
+                        iteration: iterations,
+                        enough: decision?.enoughInformation,
+                        reasoning: decision?.reasoning,
+                        nextQuery: decision?.enoughInformation
+                            ? undefined
+                            : decision?.nextSearchQuery || undefined,
+                        detail: decision?.enoughInformation
+                            ? "Moving on to write the answer"
+                            : decision?.nextSearchQuery
+                              ? `Next query: “${decision.nextSearchQuery.slice(0, 100)}”`
+                              : "Refining search strategy",
+                    });
+                }
+
+                if (update.write_answer) {
+                    answer = (update.write_answer.answer as string) ?? "";
+                    await onEvent?.({
+                        type: "step",
+                        step: "answer",
+                        title: "Writing answer from sources",
+                        detail: "Synthesizing a response with cited links",
+                        iteration: iterations,
+                    });
+                }
             }
+
+            const finalAnswer =
+                answer.trim() ||
+                "I couldn't find enough information on the web to answer that.";
+
             await onEvent?.({
                 type: "step",
-                step: "reason",
-                title: decision?.enoughInformation
-                    ? "Results look sufficient"
-                    : "Need another search",
+                step: "done",
+                title: "Web research complete",
+                detail: `${allSources.length} source${allSources.length === 1 ? "" : "s"} · ${iterations} reasoning pass${iterations === 1 ? "" : "es"}`,
                 iteration: iterations,
-                enough: decision?.enoughInformation,
-                reasoning: decision?.reasoning,
-                nextQuery: decision?.enoughInformation
-                    ? undefined
-                    : decision?.nextSearchQuery || undefined,
-                detail: decision?.enoughInformation
-                    ? "Moving on to write the answer"
-                    : decision?.nextSearchQuery
-                      ? `Next query: “${decision.nextSearchQuery.slice(0, 100)}”`
-                      : "Refining search strategy",
+                resultCount: allSources.length,
             });
-        }
 
-        if (update.write_answer) {
-            answer = (update.write_answer.answer as string) ?? "";
-            await onEvent?.({
-                type: "step",
-                step: "answer",
-                title: "Writing answer from sources",
-                detail: "Synthesizing a response with cited links",
-                iteration: iterations,
+            agent.update({
+                output: {
+                    answer: truncateForTrace(finalAnswer, 2_000),
+                    sourceCount: allSources.length,
+                    iterations,
+                },
             });
-        }
-    }
 
-    const finalAnswer =
-        answer.trim() ||
-        "I couldn't find enough information on the web to answer that.";
-
-    await onEvent?.({
-        type: "step",
-        step: "done",
-        title: "Web research complete",
-        detail: `${allSources.length} source${allSources.length === 1 ? "" : "s"} · ${iterations} reasoning pass${iterations === 1 ? "" : "es"}`,
-        iteration: iterations,
-        resultCount: allSources.length,
-    });
-
-    return {
-        answer: finalAnswer,
-        sources: allSources,
-        iterations,
-    };
+            return {
+                answer: finalAnswer,
+                sources: allSources,
+                iterations,
+            };
+        },
+        { asType: "agent" }
+    );
 }
