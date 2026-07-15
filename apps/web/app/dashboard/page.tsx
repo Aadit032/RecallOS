@@ -342,8 +342,6 @@ export default function Dashboard() {
                 className="h-12 cursor-pointer border-input bg-muted/40 pr-3 file:mr-4 file:h-full file:cursor-pointer file:rounded-md file:border-0 file:bg-primary file:px-4 file:text-sm file:font-semibold file:text-primary-foreground file:transition-colors hover:file:bg-primary/90"
                 onChange={(e) => {
                   const selected = e.target.files?.[0]
-                  setDocumentId(null)
-                  setUploadKey(null)
                   setStatus("")
                   setFile(selected ?? null)
                 }}

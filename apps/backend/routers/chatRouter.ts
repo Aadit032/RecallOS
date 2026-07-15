@@ -14,7 +14,11 @@ import {
     withGeneration,
     withStreamingGeneration,
     truncateForTrace,
+    traceTokenUsageFields,
+    mergeTokenUsage,
+    emptyTokenUsage,
     type OpenRouterUsageLike,
+    type TokenUsageSummary,
 } from "@repo/langfuse/client";
 
 dotenv.config();
@@ -708,6 +712,7 @@ chatRouter.post("/message", async (req, res) => {
                 title?: string;
             }[] = [];
             let streamFailed = false;
+            let turnTokenUsage: TokenUsageSummary = emptyTokenUsage();
 
             try {
                 const agentResult = await runWebSearchAgent(webQuery, {
@@ -750,6 +755,7 @@ chatRouter.post("/message", async (req, res) => {
                 });
 
                 assistantText = agentResult.answer;
+                turnTokenUsage = agentResult.tokenUsage;
                 // Dedupe sources by URL for the panel
                 const seen = new Set<string>();
                 sources = agentResult.sources
@@ -846,12 +852,24 @@ chatRouter.post("/message", async (req, res) => {
                 });
             }
             if (!res.writableEnded) res.end();
+            const tokenFields = traceTokenUsageFields(turnTokenUsage);
             rootSpan.update({
                 output: {
                     mode: "web",
                     answer: truncateForTrace(assistantText, 2_000),
                     sourceCount: sources.length,
+                    ...tokenFields.output,
                 },
+                metadata: {
+                    model: CHAT_MODEL,
+                    ...tokenFields.metadata,
+                },
+                ...("usageDetails" in tokenFields
+                    ? {
+                          usageDetails: tokenFields.usageDetails,
+                          costDetails: tokenFields.costDetails,
+                      }
+                    : {}),
             });
             console.log(`[POST /message] Web agent done for chat ${resolvedChat.id}`);
             return;
@@ -943,10 +961,11 @@ chatRouter.post("/message", async (req, res) => {
         console.log(`[POST /message] Step 6 — Streaming OpenRouter model=${CHAT_MODEL}`);
         const startTime = Date.now();
         let assistantText = "";
+        let turnTokenUsage: TokenUsageSummary = emptyTokenUsage();
 
         let streamFailed = false;
         try {
-            assistantText = await withStreamingGeneration(
+            const streamResult = await withStreamingGeneration(
                 "generate-response",
                 {
                     model: CHAT_MODEL,
@@ -998,6 +1017,10 @@ chatRouter.post("/message", async (req, res) => {
                     return { output: text, usage };
                 }
             );
+            assistantText = streamResult.output;
+            if (streamResult.usage) {
+                turnTokenUsage = mergeTokenUsage(turnTokenUsage, streamResult.usage);
+            }
         } catch (streamErr) {
             streamFailed = true;
             console.error(`[POST /message] OpenRouter stream error:`, streamErr);
@@ -1079,18 +1102,27 @@ chatRouter.post("/message", async (req, res) => {
         if (!res.writableEnded) res.end();
         console.log(`[POST /message] Done — stream completed for chat ${resolvedChat.id}`);
 
+        const tokenFields = traceTokenUsageFields(turnTokenUsage);
         rootSpan.update({
             output: {
                 mode: "memory",
                 answer: truncateForTrace(assistantText, 2_000),
                 sourceCount: sources.length,
                 durationMs: llmDuration,
+                ...tokenFields.output,
             },
             metadata: {
                 model: CHAT_MODEL,
                 retrievedChunks: fusedChunks.length,
                 rerankedChunks: topChunks.length,
+                ...tokenFields.metadata,
             },
+            ...("usageDetails" in tokenFields
+                ? {
+                      usageDetails: tokenFields.usageDetails,
+                      costDetails: tokenFields.costDetails,
+                  }
+                : {}),
         });
 
         // Summarize in the background after the client has the full answer

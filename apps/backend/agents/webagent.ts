@@ -4,7 +4,13 @@ import { ChatOpenRouter } from "@langchain/openrouter";
 import { ReasoningSchema } from "../types";
 import type { z } from "zod";
 import dotenv from "dotenv";
-import { createLangChainHandler, startActiveObservation, truncateForTrace } from "@repo/langfuse/client";
+import {
+    createLangChainHandler,
+    startActiveObservation,
+    traceTokenUsageFields,
+    truncateForTrace,
+    type TokenUsageSummary,
+} from "@repo/langfuse/client";
 
 dotenv.config();
 
@@ -243,6 +249,7 @@ export async function runWebSearchAgent(
     answer: string;
     sources: WebSearchHit[];
     iterations: number;
+    tokenUsage: TokenUsageSummary;
 }> {
     const options: RunWebSearchAgentOptions =
         typeof onEventOrOptions === "function"
@@ -256,6 +263,7 @@ export async function runWebSearchAgent(
             answer: "Please provide a search query after /web.",
             sources: [],
             iterations: 0,
+            tokenUsage: { input: 0, output: 0, total: 0, cost: 0 },
         };
     }
 
@@ -293,7 +301,7 @@ export async function runWebSearchAgent(
             const allSources: WebSearchHit[] = [];
             let iterations = 0;
 
-            const langfuseHandler = createLangChainHandler({
+            const { handler: langfuseHandler, getTokenUsage } = createLangChainHandler({
                 userId: options.userId,
                 sessionId: options.sessionId,
                 tags: ["web-agent", "langgraph", ...(options.tags ?? [])],
@@ -373,18 +381,32 @@ export async function runWebSearchAgent(
                 resultCount: allSources.length,
             });
 
+            const tokenUsage = getTokenUsage();
+            const tokenFields = traceTokenUsageFields(tokenUsage);
+
             agent.update({
                 output: {
                     answer: truncateForTrace(finalAnswer, 2_000),
                     sourceCount: allSources.length,
                     iterations,
+                    ...tokenFields.output,
                 },
+                metadata: {
+                    ...tokenFields.metadata,
+                },
+                ...("usageDetails" in tokenFields
+                    ? {
+                          usageDetails: tokenFields.usageDetails,
+                          costDetails: tokenFields.costDetails,
+                      }
+                    : {}),
             });
 
             return {
                 answer: finalAnswer,
                 sources: allSources,
                 iterations,
+                tokenUsage,
             };
         },
         { asType: "agent" }
