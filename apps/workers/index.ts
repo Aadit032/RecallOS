@@ -27,7 +27,10 @@ const CLAIM_INTERVAL_MS = 30_000;
 
 interface streamMessage {
     id: string,
-    message: { documentId: string }
+    message: { 
+        userId: string,
+        documentId: string 
+    }
 }
 
 export type Tier = "fast" | "cost_effective" | "agentic" | "agentic_plus";
@@ -224,12 +227,12 @@ async function documentStillExists(documentId: string): Promise<boolean> {
     return Boolean(row);
 }
 
-async function upsertChunks(chunks: Chunk[], documentId: string): Promise<Boolean> {
+async function upsertChunks(userId: string, chunks: Chunk[], documentId: string): Promise<Boolean> {
     return startActiveObservation(
         "embed-and-upsert",
         async (span) => {
             span.update({
-                input: { documentId, chunkCount: chunks.length },
+                input: { userId, documentId, chunkCount: chunks.length },
                 metadata: { collection: COLLECTION },
             });
 
@@ -276,6 +279,7 @@ async function upsertChunks(chunks: Chunk[], documentId: string): Promise<Boolea
                     },
                     payload: {
                         text: chunk.text,
+                        userId,
                         documentId,
                         chunkIndex: chunk.id,
                     }
@@ -343,11 +347,21 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         // Skip if document was deleted before we started
         const existing = await prismaClient.document.findUnique({
             where: { id: documentId },
-            select: { id: true, ObjectKey: true },
+            select: { id: true, ObjectKey: true, userId: true },
         });
         if (!existing) {
             console.log(`[processDocuments] Document ${documentId} no longer exists — skipping`);
             root.update({ output: { skipped: true, reason: "deleted" } });
+            return;
+        }
+
+        const streamUserId = streamMessage.message.userId?.trim();
+        const userId = streamUserId || existing.userId;
+        if (streamUserId && streamUserId !== existing.userId) {
+            console.warn(
+                `[processDocuments] userId mismatch for document ${documentId} — stream="${streamUserId}", db="${existing.userId}"`
+            );
+            root.update({ output: { skipped: true, reason: "userId-mismatch" } });
             return;
         }
 
@@ -453,7 +467,7 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
         }
 
         // get embeddings + store in qdrant + splade idx
-        const isUpserted = await upsertChunks(chunks, documentId);
+        const isUpserted = await upsertChunks(userId, chunks, documentId);
         if(!isUpserted){
             await prismaClient.document.update({
                 where: { id: documentId },

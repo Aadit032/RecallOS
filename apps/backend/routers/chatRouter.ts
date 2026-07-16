@@ -40,13 +40,14 @@ type RetrievedChunk = {
 /**
  * Hybrid retrieval: dense (cosine) top-50 + sparse (SPLADE) top-50,
  * fused with Reciprocal Rank Fusion in Qdrant → top 50.
+ * Scoped to the requesting user's chunks only.
  */
-async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
+async function hybridRetrieve(userId: string, query: string): Promise<RetrievedChunk[]> {
     return startActiveObservation(
         "hybrid-retrieve",
         async (retriever) => {
             retriever.update({
-                input: { query: truncateForTrace(query, 500) },
+                input: { userId, query: truncateForTrace(query, 500) },
                 metadata: {
                     collection: COLLECTION,
                     limit: RETRIEVAL_LIMIT,
@@ -54,7 +55,20 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
                 },
             });
 
-            console.log(`[hybridRetrieve] Starting retrieval for query: "${query.slice(0, 120)}"`);
+            const ownedDocuments = await prismaClient.document.findMany({
+                where: { userId },
+                select: { id: true },
+            });
+            const ownedDocumentIds = ownedDocuments.map((doc) => doc.id);
+            if (ownedDocumentIds.length === 0) {
+                console.log(`[hybridRetrieve] No documents for userId=${userId}, skipping retrieval`);
+                retriever.update({ output: { chunkCount: 0, reason: "no-documents" } });
+                return [];
+            }
+
+            const filter = { must: [{ key: "documentId", match: { any: ownedDocumentIds } }] };
+
+            console.log(`[hybridRetrieve] Starting retrieval for userId=${userId}, query: "${query.slice(0, 120)}"`);
             const [denseVectors, sparseVectors] = await Promise.all([
                 getDenseVectors([query]),
                 getSparseVectors([query]),
@@ -92,7 +106,7 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
                 throw new Error("Sparse vector is empty");
             }
 
-            console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${RETRIEVAL_LIMIT}`);
+            console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${RETRIEVAL_LIMIT}, userId=${userId}, documents=${ownedDocumentIds.length}`);
             let res;
             try {
                 res = await qdrantClient.query(COLLECTION, {
@@ -101,15 +115,18 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
                             query: denseQuery,
                             using: "dense",
                             limit: RETRIEVAL_LIMIT,
+                            filter,
                         },
                         {
                             query: sparseQuery,
                             using: "splade",
                             limit: RETRIEVAL_LIMIT,
+                            filter,
                         },
                     ],
                     query: { fusion: "rrf" },
                     limit: RETRIEVAL_LIMIT,
+                    filter,
                     with_payload: true,
                 });
             } catch (qdrantErr: any) {
@@ -122,17 +139,30 @@ async function hybridRetrieve(query: string): Promise<RetrievedChunk[]> {
                 throw qdrantErr;
             }
 
-            const chunks = (res.points ?? []).map((point) => {
+            const rawChunks = (res.points ?? []).map((point) => {
                 const payload = (point.payload ?? {}) as Record<string, unknown>;
                 return {
                     id: String(point.id),
                     text: typeof payload.text === "string" ? payload.text : "",
                     score: point.score ?? 0,
                     documentId: (payload.documentId as string | number | undefined) ?? null,
+                    payloadUserId: typeof payload.userId === "string" ? payload.userId : null,
                 };
             }).filter((c) => c.text.length > 0);
 
-            console.log(`[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} chunks with text`);
+            const ownedDocumentIdSet = new Set(ownedDocumentIds);
+
+            const chunks = rawChunks
+                .filter((c) => {
+                    const docId = c.documentId == null ? null : String(c.documentId);
+                    if (!docId || !ownedDocumentIdSet.has(docId)) return false;
+                    return c.payloadUserId == null || c.payloadUserId === userId;
+                })
+                .map(({ payloadUserId: _payloadUserId, ...chunk }) => chunk);
+
+            console.log(
+                `[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} user-scoped chunks with text`
+            );
 
             retriever.update({
                 output: {
@@ -877,7 +907,7 @@ chatRouter.post("/message", async (req, res) => {
 
         // 3. Hybrid retrieval (dense + sparse → RRF top 50)
         console.log(`[POST /message] Step 3 — Hybrid retrieval for: "${message.slice(0, 120)}"`);
-        const fusedChunks = await hybridRetrieve(message);
+        const fusedChunks = await hybridRetrieve(userId, message);
         console.log(`[POST /message] Hybrid retrieval returned ${fusedChunks.length} fused chunks`);
 
         // 4. Cross-encoder rerank → top 5

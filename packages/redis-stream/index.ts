@@ -27,10 +27,10 @@ try {
     console.log(`[redis-stream] Consumer group "${GROUP_NAME}" already exists`);
 }
 
-export async function xAdd(documentId: string): Promise<string | null>{
+export async function xAdd(userId: string, documentId: string): Promise<string | null>{
     console.log(`[redis-stream:xAdd] Adding documentId="${documentId}" to stream "${STREAM_NAME}"`);
     try{
-        const res = await redisClient.xAdd(STREAM_NAME, '*', { documentId });
+        const res = await redisClient.xAdd(STREAM_NAME, '*', { userId, documentId });
         console.log(`[redis-stream:xAdd] Success: messageId="${res}"`);
         return res;
     }catch(e){
@@ -42,6 +42,7 @@ export async function xAdd(documentId: string): Promise<string | null>{
 type streamMessage = { 
     id: string,
     message: {
+        userId: string
         documentId: string 
     }
 };
@@ -108,7 +109,10 @@ export async function xAutoClaim(
             .filter((msg): msg is NonNullable<typeof msg> => msg !== null)
             .map(msg => ({
                 id: msg.id,
-                message: { documentId: msg.message.documentId ?? "" },
+                message: {
+                    userId: msg.message.userId ?? "",
+                    documentId: msg.message.documentId ?? "",
+                },
             }));
     } catch (e) {
         console.error(`[redis-stream:xAutoClaim] Failed:`, e);
@@ -128,8 +132,8 @@ export async function xPendingRange(
 ): Promise<Array<{ id: string; consumer: string; deliveryCount: number }>> {
     console.log(`[redis-stream:xPendingRange] Pending detail — group="${consumerGroup}", start="${start}", end="${end}", count=${count}`);
     try {
-        const result = await redisClient.xPendingRange(STREAM_NAME, consumerGroup, start, end, count)   ;
-         console.log(`[redis-stream:xPendingRange] Got ${result.length} pending item(s)`);
+        const result = await redisClient.xPendingRange(STREAM_NAME, consumerGroup, start, end, count);
+        console.log(`[redis-stream:xPendingRange] Got ${result.length} pending item(s)`);
         return result.map(item => ({
             id: item.id,
             consumer: item.consumer,

@@ -103,7 +103,7 @@ uploadRouter.post("/confirm", async (req, res) => {
         }
         if (isNew) {
             console.log(`[upload:confirm] Pushing document ${document.id} onto Redis stream`);
-            const messageId = await xAdd(document.id);
+            const messageId = await xAdd(userId, document.id);
             if (!messageId) {
                 console.error(`[upload:confirm] Failed to push onto queue`);
                 res.status(500).json({ message: "The file was not pushed on the queue." });

@@ -148,7 +148,7 @@ downloadRouter.delete("/:id", async (req, res) => {
             try {
                 await qdrantClient.delete(COLLECTION, {
                     wait: true,
-                    filter: { must: [ { key: "documentId", match: { value: doc.id } } ] },
+                    filter: { must: [{ key: "documentId", match: { value: doc.id } }] },
                 });
                 console.log(`[download:delete] Qdrant points deleted for documentId=${doc.id}`);
             } catch (e) {
