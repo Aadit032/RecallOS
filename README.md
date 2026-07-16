@@ -21,7 +21,7 @@ Upload PDFs. Index them. Ask questions with hybrid retrieval and source citation
 
 RecallOS is a personal knowledge OS: ingest PDFs, embed them with dense + sparse vectors, and chat over them with hybrid retrieval, cross-encoder reranking, and grounded answers.
 
-**Implemented today**
+**Implemented**
 
 - PDF upload via MinIO presigned URLs
 - Async ingestion workers (Redis Streams + LlamaParse)
