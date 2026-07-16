@@ -9,658 +9,311 @@
 ╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝      ╚═════╝ ╚══════╝
 ```
 
-### 🧠 Enterprise Knowledge OS powered by AI Agents
+### Organizational memory for your documents
 
-Store. Remember. Retrieve. Reason.
+Upload PDFs. Index them. Ask questions with hybrid retrieval and source citations.
 
 </div>
 
 ---
 
-# ✨ What is RecallOS?
+# What is RecallOS?
 
-RecallOS is an **AI-native enterprise knowledge operating system** that allows organizations to ingest, organize, search and reason over every piece of company knowledge.
+RecallOS is a personal knowledge OS: ingest PDFs, embed them with dense + sparse vectors, and chat over them with hybrid retrieval, cross-encoder reranking, and grounded answers.
 
-Instead of acting as another document storage platform, RecallOS builds a searchable memory for your organization using:
+**Implemented today**
 
-- 📄 PDFs
-- 📊 PowerPoints
-- 🖼 Images
-- 🎥 Videos
-- 📝 Notes
-- 💬 Conversations
-
-It combines **hybrid retrieval (BM25 + Vector Search)**, **LLM-powered reasoning**, **agentic workflows**, and **long-term organizational memory**.
+- PDF upload via MinIO presigned URLs
+- Async ingestion workers (Redis Streams + LlamaParse)
+- Hybrid search in Qdrant (dense BGE + sparse SPLADE, fused with RRF)
+- Cross-encoder rerank → top chunks into the LLM
+- Streaming chat with source chunk citations
+- Optional web research agent (`/web` + Exa)
+- Projects with custom system prompts
+- Chat history, pin/delete, and rolling conversation summaries
+- Langfuse tracing for chat and ingest
 
 ---
 
-# 🏗 Tech Stack
+# Tech Stack
 
 | Layer | Technology |
 |--------|------------|
-| Monorepo | Bun + Turborepo |
-| Frontend | Next.js |
+| Monorepo | Bun workspaces + Turborepo |
+| Frontend | Next.js (App Router), React, Tailwind |
 | Backend | Express |
-| Queue | Redis Streams |
-| Object Storage | MinIO (S3) |
-| Metadata | PostgreSQL |
-| Vector Search | Qdrant |
-| Lexical Search | OpenSearch (BM25) |
-| Parsing | LlamaParse |
-| Speech | Whisper |
-| Vision | Vision LLM |
-| LLM | Provider Agnostic |
+| Runtime | Bun |
+| Auth | JWT + bcrypt |
+| Queue | Redis Streams (consumer groups, XAUTOCLAIM) |
+| Object storage | MinIO (S3 API) |
+| Metadata | PostgreSQL + Prisma |
+| Vectors | Qdrant (dense + sparse named vectors) |
+| Dense embeddings | BGE-small-en (`fastembed`) |
+| Sparse embeddings | SPLADE++ EN v1 (`fastembed`) |
+| Rerank | Hugging Face cross-encoder (`ms-marco-MiniLM-L6-v2`) |
+| Parsing | LlamaParse (LlamaCloud) |
+| LLM | OpenRouter |
+| Web search | Exa + LangGraph agent |
+| Observability | Langfuse (OpenTelemetry) |
 
 ---
 
-# 📂 Repository Structure
+# Repository Structure
 
 ```text
 apps/
-    web/
-    api/
-    worker/
+  web/          # Next.js UI (auth, dashboard, chat)
+  backend/      # Express API + web agent
+  workers/      # Document ingest pipeline
 
 packages/
-    ui/
-    types/
-    shared/
-    config/
+  db/           # Prisma schema + client (@repo/prisma)
+  embed/        # Dense / sparse embed + cross-encoder
+  qdrant/       # Qdrant client + collection setup
+  redis-stream/ # Stream producer / consumer helpers
+  minio/        # S3 client for MinIO
+  openrouter/   # OpenRouter LLM client
+  langfuse/     # Shared tracing helpers
+  ui/           # Shared UI primitives
+  eslint-config/
+  typescript-config/
+
+specs/          # Design notes used while building features
 ```
 
 ---
 
-# 🚀 High Level Architecture
+# Architecture
 
 ```text
-                        +----------------------+
-                        |      Frontend        |
-                        +----------+-----------+
-                                   |
-                     Upload using Presigned URL
-                                   |
-                                   v
-                         +------------------+
-                         |      MinIO       |
-                         |  Original Files  |
-                         +------------------+
-
-                                   |
-                             Metadata Event
-                                   |
-                                   v
-
-                         +------------------+
-                         | Redis Streams    |
-                         +--------+---------+
-                                  |
-                                  |
-                     +------------+------------+
-                     |                         |
-             Ingestion Worker           Future Workers
-                     |
-                     v
-
-              +------------------+
-              |   LlamaParse     |
-              +------------------+
-                     |
-                     |
-      --------------------------------------------
-      |                |                 |
-      |                |                 |
- Structured Text     Images          Tables
-      |                |
-      |                |
-Chunk Semantically   Vision Model
-      |                |
-      +--------+-------+
-               |
-      Chunk Enrichment
-               |
-      (summary + metadata)
-               |
-      Embedding Generation
-               |
-      +---------+-----------+
-      |                     |
-      |                     |
-      v                     v
-
-  OpenSearch          Qdrant
-   (BM25)          (Embeddings)
-
-               |
-               |
-         PostgreSQL
-(Document Metadata)
+  +-----------+         presigned PUT          +--------+
+  |  Next.js  | -----------------------------> | MinIO  |
+  |   web     |                                | (PDFs) |
+  +-----+-----+                                +---+----+
+        |                                          |
+        | REST (JWT)                               | object key
+        v                                          |
+  +-----+-----+     xAdd(userId, documentId)  +----v-----+
+  |  Express  | ----------------------------> |  Redis   |
+  |  backend  |                               | Streams  |
+  +-----+-----+                               +----+-----+
+        |                                          |
+        | hybrid query + chat                      | XREADGROUP
+        |                                          v
+        |                                   +------+------+
+        |                                   |   workers   |
+        |                                   | LlamaParse  |
+        |                                   | chunk/embed |
+        |                                   +------+------+
+        |                                          |
+        |              +-----------+               |
+        +------------> |  Qdrant   | <-------------+
+        |              | dense+    |   upsert points
+        |              | splade    |
+        |              +-----------+
+        |
+        v
+  +-----------+
+  | Postgres  |  users, documents, chats, messages, projects
+  +-----------+
 ```
 
 ---
 
-# 📥 Ingestion Flow
+# Ingestion Pipeline
+
+Only **PDFs** are accepted (`application/pdf`).
 
 ```text
-User Upload
-
-↓
-
-MinIO
-
-↓
-
-Redis Stream Event
-
-↓
-
-Worker
-
-↓
-
-LlamaParse
-
-↓
-
-Semantic Chunking
-
-↓
-
-Chunk Enrichment
-
-↓
-
-Embeddings
-
-↓
-
-Store in
-
-• PostgreSQL
-• Qdrant
-• OpenSearch
+1. Client requests presigned URL  →  POST /api/v1/upload/post-file-url
+2. Client uploads bytes to MinIO
+3. Client confirms upload         →  POST /api/v1/upload/confirm
+      • verifies object size
+      • creates Document (status QUEUED)
+      • enqueues Redis Stream job
+4. Worker claims job (XREADGROUP)
+5. Status → PROCESSING
+6. LlamaParse → markdown
+7. Semantic-ish chunking (headings → paragraphs, overlap)
+8. Dense (BGE) + sparse (SPLADE) embeddings
+9. Upsert points into Qdrant (payload: text, userId, documentId, chunkIndex)
+10. Status → COMPLETED (or FAILED)
 ```
 
----
+Workers also run a **stale-job reclaimer** (`XAUTOCLAIM`) on an interval: if a job is idle too long it is claimed by a live worker; after too many deliveries the document is marked `FAILED` and ACKed.
 
-# 📚 Chunk Enrichment
-
-Every chunk is enriched before indexing.
-
-```yaml
-Document Summary
-
-Chunk Summary
-
-Section Title
-
-Keywords
-
-Entities
-
-Page Number
-
-Tags
-
-Document ID
-
-User ID
-```
-
-This dramatically improves retrieval quality.
+Contextual chunk enrichment (LLM situates each chunk in the document) exists in the worker for non-`basic` pricing tiers; the default worker path currently processes as `basic` (parse → chunk → embed, no per-chunk LLM context).
 
 ---
 
-# 🗃 Storage Layer
-
-## 🪣 MinIO
-
-Stores
-
-- Original PDFs
-- Images
-- Videos
-- PPTs
-
----
-
-## 🐘 PostgreSQL
-
-Stores metadata.
+# Retrieval & Chat
 
 ```text
-Documents
-
-id
-title
-tags
-summary
-type
-owner
-bucket_key
-status
-created_at
+User message
+     │
+     ▼
+Embed query (dense BGE + sparse SPLADE)
+     │
+     ▼
+Qdrant hybrid query
+  prefetch dense top-50
+  prefetch sparse top-50
+  fuse with RRF → top 50
+  (filtered to the user's documents)
+     │
+     ▼
+Cross-encoder rerank → top 5
+     │
+     ▼
+System prompt + recent chat history (+ optional project prompt)
+     │
+     ▼
+OpenRouter stream (SSE)
+     │
+     ▼
+Answer + sourceChunks stored on the assistant message
 ```
 
-```text
-Chunks
+### Chat features
 
-id
-document_id
-page
-section
-summary
-chunk_index
+- Create session on first message
+- Streamed replies over SSE
+- Source chunks returned with each answer (id, score, text preview)
+- List / load / pin / rename / delete chats
+- Attach chats to **projects** (optional custom system prompt)
+- Rolling **conversation summaries** injected into later prompts (other chats’ summaries + incremental summary of the current chat)
+- **Web mode**: prefix or toggle `/web` to run a LangGraph research loop (Exa search → reason → refine → answer), with live step events in the UI
+
+---
+
+# API Surface
+
+Base path: `/api/v1` (JWT middleware on all routes except auth).
+
+| Area | Methods |
+|------|---------|
+| **Auth** | `POST /auth/signup`, `POST /auth/signin` |
+| **Upload** | `POST /upload/post-file-url`, `POST /upload/confirm` |
+| **Documents** | `GET /download/list`, `POST /download/get-download-url`, `DELETE /download/:id` |
+| **Chat** | `GET /chat`, `GET /chat/:id`, `PATCH /chat/:id`, `DELETE /chat/:id`, `POST /chat/message` |
+| **Projects** | `GET/POST /projects`, `PATCH/DELETE /projects/:id` |
+
+Document delete removes the Postgres row, MinIO object, stream job (if still queued), and matching Qdrant points.
+
+---
+
+# Frontend
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Landing (or chat if signed in) |
+| `/signin`, `/signup` | Auth |
+| `/dashboard` | Upload PDFs, list status, download / delete |
+| `/chat` | Full chat UI: history, projects, sources, web agent |
+
+---
+
+# Data Model (Postgres)
+
+| Model | Role |
+|-------|------|
+| `User` | Username + hashed password |
+| `Document` | Title, object key, status (`QUEUED` / `PROCESSING` / `COMPLETED` / `FAILED`), stream message id |
+| `Project` | Named workspace + optional system prompt |
+| `Chat` | Title, pin, optional project, summary fields |
+| `Message` | role, content, `sourceChunks` JSON |
+| `Memory` | Schema present for durable facts (not wired into chat yet) |
+
+Chunk vectors live only in **Qdrant**, not as a Postgres table.
+
+---
+
+# Storage Roles
+
+| Store | What it holds |
+|-------|----------------|
+| **MinIO** | Original PDF objects |
+| **PostgreSQL** | Users, docs, chats, messages, projects |
+| **Redis Streams** | Ingest job queue + consumer group PEL |
+| **Qdrant** | Per-chunk dense + SPLADE vectors and text payload |
+
+There is **no OpenSearch** in this codebase. Lexical signal comes from **SPLADE sparse vectors** inside Qdrant, fused with dense cosine via RRF.
+
+---
+
+# Observability
+
+`@repo/langfuse` instruments:
+
+- Chat RAG turns (`hybrid-retrieve` → `cross-encode-rerank` → `generate-response`)
+- Web research agent (LangGraph nodes)
+- Document ingest (`process-document` and nested steps)
+
+If Langfuse keys are missing, tracing no-ops.
+
+---
+
+# Local Development
+
+### Prerequisites
+
+- Bun ≥ 1.3
+- PostgreSQL
+- Redis
+- MinIO
+- Qdrant
+- API keys: LlamaCloud, OpenRouter; optional HF, Exa, Langfuse
+
+### Install & run
+
+```bash
+bun install
+
+# Configure env (root and/or apps/*). See .env.example for a minimal set.
+# Typical keys include DATABASE_URL, MinIO, JWT_SECRET, PORT,
+# STREAM_NAME / GROUP_NAME, COLLECTION, DENSE_DIM, OPENROUTER_API_KEY,
+# LLAMA_CLOUD_API_KEY, WORKER_ID, CONSUMER_GROUP, etc.
+
+# Apply Prisma migrations (from packages/db)
+cd packages/db && bunx prisma migrate dev
+
+# From repo root — starts web, backend, workers via turbo
+bun run dev
 ```
 
----
+Or run apps individually:
 
-## 🔍 OpenSearch
-
-Stores every chunk for lexical retrieval.
-
-```text
-Chunk
-
-↓
-
-Tokenization
-
-↓
-
-Inverted Index
-
-↓
-
-BM25 Ranking
-```
-
-Perfect for
-
-- exact matches
-- APIs
-- code
-- filenames
-- keywords
-
----
-
-## 🧠 Qdrant
-
-Stores
-
-```text
-Embedding
-
-↓
-
-Vector Search
-
-↓
-
-Cosine Similarity
-```
-
-Perfect for semantic search.
-
----
-
-# 🔎 Retrieval Architecture
-
-```text
-                        User Query
-                             |
-                             |
-                     Query Rewriter
-                             |
-                +------------+------------+
-                |                         |
-                |                         |
-          Generate               Original Query
-         Embeddings
-                |                         |
-                |                         |
-                v                         v
-
-            Qdrant                 OpenSearch
-
-        Top 100 Results         Top 100 Results
-
-                \                 /
-
-                 \               /
-
-               Reciprocal Rank Fusion
-
-                         |
-
-                    Top 30 Chunks
-
-                         |
-
-                 Cross Encoder Reranker
-
-                         |
-
-                     Top 5 Chunks
-
-                         |
-
-                         LLM
-
-                         |
-
-                      Final Answer
-```
-
----
-
-# 📌 Why Hybrid Retrieval?
-
-Vector Search
-
-✅ understands meaning
-
-❌ poor at exact keywords
-
----
-
-BM25
-
-✅ exact matching
-
-❌ no semantic understanding
-
----
-
-RRF combines both.
-
-```text
-Vector Results
-
-+
-
-BM25 Results
-
-↓
-
-RRF
-
-↓
-
-Best Combined Ranking
+```bash
+bun run --filter web dev
+bun run --filter backend dev   # or: cd apps/backend && bun run index.ts
+bun run --filter workers dev   # or: cd apps/workers && bun run index.ts
 ```
 
 ---
 
-# 🖼 Image Retrieval
+# Design Principles (as built)
 
-Images are indexed independently.
-
-```text
-Image
-
-↓
-
-Vision Model
-
-↓
-
-Caption
-
-↓
-
-OCR
-
-↓
-
-Embedding
-
-↓
-
-Image Collection
-```
-
-Example
-
-> Show me the transformer architecture diagram.
-
-Returns
-
-✅ Image
-
-✅ Caption
-
-✅ Source document
+- **Async ingest** — uploads never block on parse/embed
+- **Hybrid retrieval** — dense meaning + sparse terms, fused with RRF
+- **Source grounded** — answers carry chunk citations
+- **User scoped** — retrieval and deletes are filtered by ownership
+- **Modular monorepo** — shared clients in `packages/*`
+- **Observable** — optional Langfuse traces end to end
 
 ---
 
-# 🎥 Video Retrieval
-
-```text
-Video
-
-↓
-
-Whisper
-
-↓
-
-Transcript
-
-↓
-
-Chunk
-
-↓
-
-Embedding
-```
-
-Also
-
-```text
-Video
-
-↓
-
-Extract Keyframes
-
-↓
-
-Vision Model
-
-↓
-
-Frame Captions
-
-↓
-
-Embedding
-```
-
-Allows queries like
-
-> Show the latency graph shown in the meeting.
-
----
-
-# 🧠 Organizational Memory
-
-Every conversation can become memory.
-
-```text
-Conversation
-
-↓
-
-Extract Facts
-
-↓
-
-Importance Scoring
-
-↓
-
-Memory Chunks
-
-↓
-
-Embedding
-
-↓
-
-Memory Collection
-```
-
-Instead of storing chat history, RecallOS stores reusable knowledge.
-
----
-
-# 🤖 Agent Architecture
-
-```text
-User Query
-
-↓
-
-Planner Agent
-
-↓
-
-Choose Tools
-
-↓
-
-Execute
-
-↓
-
-Answer
-```
-
-Available tools
-
-- 🔍 Search Knowledge Base
-- 🌐 Web Search
-- 📄 Generate Reports
-- 📊 Generate Presentations
-- 🖼 Retrieve Images
-- 🎥 Retrieve Videos
-- 🧠 Search Memory
-
----
-
-# 🌍 Web Search
-
-If retrieval confidence is low
-
-```text
-Knowledge Search
-
-↓
-
-Low Confidence
-
-↓
-
-Agent
-
-↓
-
-Web Search
-
-↓
-
-Combine Results
-
-↓
-
-Answer
-```
-
----
-
-# 📑 Report Generation
-
-```text
-Query
-
-↓
-
-Retrieve Context
-
-↓
-
-Planner
-
-↓
-
-Outline
-
-↓
-
-Generate Report
-
-↓
-
-Markdown / PDF / PPT
-```
-
----
-
-# 🎯 Retrieval Citations
-
-Every response includes source chunks.
-
-```text
-Answer
-
-↓
-
-Referenced Chunks
-
-↓
-
-Page
-
-↓
-
-Document
-
-↓
-
-Highlight
-```
-
-Users can inspect exactly where every answer came from.
-
----
-
-# 🔮 Future Roadmap
-
-- ✅ Multi-agent workflows
-- ✅ Graph-based memory
-- ✅ Knowledge graph extraction
-- ✅ Scheduled agents
-- ✅ Slack / Discord / Gmail connectors
-- ✅ Codebase indexing
-- ✅ Calendar integration
-- ✅ Organization-wide semantic memory
-- ✅ MCP support
-- ✅ Voice interface
-
----
-
-# 💡 Design Principles
-
-- 🧠 Memory First
-- ⚡ Async Everything
-- 🔍 Hybrid Retrieval
-- 🤖 Agent Native
-- 📚 Source Grounded
-- 🧩 Modular Architecture
-- 🚀 Horizontally Scalable
-- 🔒 Enterprise Ready
+# Not in this repo (yet)
+
+These appeared in earlier product vision docs but are **not implemented**:
+
+- PowerPoint / image / video ingest
+- Whisper transcription or vision captioning
+- OpenSearch / BM25 index
+- Multi-tool planner agents (reports, slides, connectors)
+- Graph memory, knowledge-graph extraction
+- Slack / Discord / Gmail / calendar integrations
+- MCP, voice UI, organization-wide multi-tenant OS features
+- Durable `Memory` fact extraction (table only)
 
 ---
 
@@ -668,13 +321,6 @@ Users can inspect exactly where every answer came from.
 
 ### RecallOS
 
-**The operating system for organizational memory.**
-
-*"Your company's second brain."*
+**Search your PDFs. Cite your sources.**
 
 </div>
-
---- 
-
-1. use CLAP to combine audio and text in the same embedding space
-2. for images use text + vector space search
