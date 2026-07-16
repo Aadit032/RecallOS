@@ -37,24 +37,24 @@ RecallOS is a personal knowledge OS: ingest PDFs, embed them with dense + sparse
 
 # Tech Stack
 
-| Layer | Technology |
-|--------|------------|
-| Monorepo | Bun workspaces + Turborepo |
-| Frontend | Next.js (App Router), React, Tailwind |
-| Backend | Express |
-| Runtime | Bun |
-| Auth | JWT + bcrypt |
-| Queue | Redis Streams (consumer groups, XAUTOCLAIM) |
-| Object storage | MinIO (S3 API) |
-| Metadata | PostgreSQL + Prisma |
-| Vectors | Qdrant (dense + sparse named vectors) |
-| Dense embeddings | BGE-small-en (`fastembed`) |
-| Sparse embeddings | SPLADE++ EN v1 (`fastembed`) |
-| Rerank | Hugging Face cross-encoder (`ms-marco-MiniLM-L6-v2`) |
-| Parsing | LlamaParse (LlamaCloud) |
-| LLM | OpenRouter |
-| Web search | Exa + LangGraph agent |
-| Observability | Langfuse (OpenTelemetry) |
+| Layer             | Technology                                           |
+| ----------------- | ---------------------------------------------------- |
+| Monorepo          | Bun workspaces + Turborepo                           |
+| Frontend          | Next.js (App Router), React, Tailwind                |
+| Backend           | Express                                              |
+| Runtime           | Bun                                                  |
+| Auth              | JWT + bcrypt                                         |
+| Queue             | Redis Streams (consumer groups, XAUTOCLAIM)          |
+| Object storage    | MinIO (S3 API)                                       |
+| Metadata          | PostgreSQL + Prisma                                  |
+| Vectors           | Qdrant (dense + sparse named vectors)                |
+| Dense embeddings  | BGE-small-en (`fastembed`)                           |
+| Sparse embeddings | SPLADE++ EN v1 (`fastembed`)                         |
+| Rerank            | Hugging Face cross-encoder (`ms-marco-MiniLM-L6-v2`) |
+| Parsing           | LlamaParse (LlamaCloud)                              |
+| LLM               | OpenRouter                                           |
+| Web search        | Exa + LangGraph agent                                |
+| Observability     | Langfuse (OpenTelemetry)                             |
 
 ---
 
@@ -190,13 +190,13 @@ Answer + sourceChunks stored on the assistant message
 
 Base path: `/api/v1` (JWT middleware on all routes except auth).
 
-| Area | Methods |
-|------|---------|
-| **Auth** | `POST /auth/signup`, `POST /auth/signin` |
-| **Upload** | `POST /upload/post-file-url`, `POST /upload/confirm` |
-| **Documents** | `GET /download/list`, `POST /download/get-download-url`, `DELETE /download/:id` |
-| **Chat** | `GET /chat`, `GET /chat/:id`, `PATCH /chat/:id`, `DELETE /chat/:id`, `POST /chat/message` |
-| **Projects** | `GET/POST /projects`, `PATCH/DELETE /projects/:id` |
+| Area          | Methods                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| **Auth**      | `POST /auth/signup`, `POST /auth/signin`                                                  |
+| **Upload**    | `POST /upload/post-file-url`, `POST /upload/confirm`                                      |
+| **Documents** | `GET /download/list`, `POST /download/get-download-url`, `DELETE /download/:id`           |
+| **Chat**      | `GET /chat`, `GET /chat/:id`, `PATCH /chat/:id`, `DELETE /chat/:id`, `POST /chat/message` |
+| **Projects**  | `GET/POST /projects`, `PATCH/DELETE /projects/:id`                                        |
 
 Document delete removes the Postgres row, MinIO object, stream job (if still queued), and matching Qdrant points.
 
@@ -204,25 +204,25 @@ Document delete removes the Postgres row, MinIO object, stream job (if still que
 
 # Frontend
 
-| Route | Purpose |
-|-------|---------|
-| `/` | Landing (or chat if signed in) |
-| `/signin`, `/signup` | Auth |
-| `/dashboard` | Upload PDFs, list status, download / delete |
-| `/chat` | Full chat UI: history, projects, sources, web agent |
+| Route                | Purpose                                             |
+| -------------------- | --------------------------------------------------- |
+| `/`                  | Landing (or chat if signed in)                      |
+| `/signin`, `/signup` | Auth                                                |
+| `/dashboard`         | Upload PDFs, list status, download / delete         |
+| `/chat`              | Full chat UI: history, projects, sources, web agent |
 
 ---
 
 # Data Model (Postgres)
 
-| Model | Role |
-|-------|------|
-| `User` | Username + hashed password |
+| Model      | Role                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| `User`     | Username + hashed password                                                                      |
 | `Document` | Title, object key, status (`QUEUED` / `PROCESSING` / `COMPLETED` / `FAILED`), stream message id |
-| `Project` | Named workspace + optional system prompt |
-| `Chat` | Title, pin, optional project, summary fields |
-| `Message` | role, content, `sourceChunks` JSON |
-| `Memory` | Schema present for durable facts (not wired into chat yet) |
+| `Project`  | Named workspace + optional system prompt                                                        |
+| `Chat`     | Title, pin, optional project, summary fields                                                    |
+| `Message`  | role, content, `sourceChunks` JSON                                                              |
+| `Memory`   | Schema present for durable facts (not wired into chat yet)                                      |
 
 Chunk vectors live only in **Qdrant**, not as a Postgres table.
 
@@ -230,12 +230,12 @@ Chunk vectors live only in **Qdrant**, not as a Postgres table.
 
 # Storage Roles
 
-| Store | What it holds |
-|-------|----------------|
-| **MinIO** | Original PDF objects |
-| **PostgreSQL** | Users, docs, chats, messages, projects |
-| **Redis Streams** | Ingest job queue + consumer group PEL |
-| **Qdrant** | Per-chunk dense + SPLADE vectors and text payload |
+| Store             | What it holds                                     |
+| ----------------- | ------------------------------------------------- |
+| **MinIO**         | Original PDF objects                              |
+| **PostgreSQL**    | Users, docs, chats, messages, projects            |
+| **Redis Streams** | Ingest job queue + consumer group PEL             |
+| **Qdrant**        | Per-chunk dense + SPLADE vectors and text payload |
 
 There is **no OpenSearch** in this codebase. Lexical signal comes from **SPLADE sparse vectors** inside Qdrant, fused with dense cosine via RRF.
 
@@ -302,9 +302,7 @@ bun run --filter workers dev   # or: cd apps/workers && bun run index.ts
 
 ---
 
-# Not in this repo (yet)
-
-These appeared in earlier product vision docs but are **not implemented**:
+# Future scope
 
 - PowerPoint / image / video ingest
 - Whisper transcription or vision captioning
