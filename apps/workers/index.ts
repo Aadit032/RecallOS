@@ -525,6 +525,6 @@ await Promise.all([
 async function claimLoop(){
     while(true){
         await claimStaleJobs();
-        await new Promise(resolve => setTimeout(resolve, 30 * 1000))
+        await new Promise(resolve => setTimeout(resolve, CLAIM_INTERVAL_MS))
     }
 }
