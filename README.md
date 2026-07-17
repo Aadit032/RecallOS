@@ -9,7 +9,7 @@
 ╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝      ╚═════╝ ╚══════╝
 ```
 
-### Organizational memory for your documents
+### Organizational memory for your documents · **v1.0.0**
 
 Upload PDFs. Index them. Ask questions with hybrid retrieval and source citations.
 
@@ -19,7 +19,7 @@ Upload PDFs. Index them. Ask questions with hybrid retrieval and source citation
 
 # What is RecallOS?
 
-RecallOS is a personal knowledge OS: ingest PDFs, embed them with dense + sparse vectors, and chat over them with hybrid retrieval, cross-encoder reranking, and grounded answers.
+A multimodal memory architecture for persistent retrieval over heterogeneous enterprise knowledge.
 
 **Implemented**
 

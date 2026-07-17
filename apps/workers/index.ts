@@ -22,8 +22,8 @@ const COLLECTION = process.env.COLLECTION as string;
 export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
 
 const MAX_RETRIES = 10;
-const IDLE_THRESHOLD_MS = 1_800_000;
-const CLAIM_INTERVAL_MS = 30_000;
+const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const CLAIM_INTERVAL_MS = 30 * 1000;
 
 interface streamMessage {
     id: string,
@@ -516,5 +516,15 @@ async function processDocuments(streamMessage: streamMessage, pricingTier: Prici
 }
 
 // ========== RUN WORKERS ============
-setInterval(claimStaleJobs, CLAIM_INTERVAL_MS);
-await workers();
+
+await Promise.all([
+    workers(),
+    claimLoop()
+])
+
+async function claimLoop(){
+    while(true){
+        await claimStaleJobs();
+        await new Promise(resolve => setTimeout(resolve, 30 * 1000))
+    }
+}
