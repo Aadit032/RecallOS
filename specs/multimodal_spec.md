@@ -1,5 +1,7 @@
 # New architecture:
 
+![architecture](../assets/architecture.png)
+
 # RecallOS Ingestion Architecture Specification
 
 ## Goals
