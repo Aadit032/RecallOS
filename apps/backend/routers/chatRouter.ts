@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
 import { qdrantClient } from "@repo/qdrant/client";
 import { prismaClient } from "@repo/prisma/client";
@@ -592,7 +592,7 @@ function beginSse(res: import("express").Response) {
     res.flushHeaders?.();
 }
 
-function writeSse(res: import("express").Response, payload: Record<string, unknown>) {
+function writeSse(res: Response, payload: Record<string, unknown>) {
     if (res.writableEnded) return;
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
