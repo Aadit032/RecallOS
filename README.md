@@ -301,7 +301,7 @@ bun run --filter workers dev   # or: cd apps/workers && bun run index.ts
 - **Observable** — optional Langfuse traces end to end
 
 ---
-
+<!-- 
 # Future scope
 
 - PowerPoint / image / video ingest
@@ -311,9 +311,9 @@ bun run --filter workers dev   # or: cd apps/workers && bun run index.ts
 - Graph memory, knowledge-graph extraction
 - Slack / Discord / Gmail / calendar integrations
 - MCP, voice UI, organization-wide multi-tenant OS features
-- Durable `Memory` fact extraction (table only)
+- Durable `Memory` fact extraction (table only) -->
 
----
+<!-- --- -->
 
 <div align="center">
 
