@@ -1,13 +1,12 @@
 import { s3 } from "@repo/minio/client";
 import  { GetObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { llamaClient } from "./index";
+import { llamaClient, type Tier } from "./index.ts";
 import dotenv from "dotenv"
 import type { ParsingCreateResponse, ParsingGetResponse } from "@llamaindex/llama-cloud/resources";
 import fs from "fs";
 import { Readable } from "stream";
 import type { FileCreateResponse } from "@llamaindex/llama-cloud/resources.js";
-import { type Tier } from "./index.ts"
 dotenv.config(); 
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME as string;

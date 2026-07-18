@@ -2,10 +2,24 @@ import { FlagEmbedding, EmbeddingModel } from "fastembed";
 import { SparseTextEmbedding, SparseEmbeddingModel } from "fastembed";
 import { InferenceClient } from "@huggingface/inference";
 
-// other options: BGESmallEN (384-dim, faster), BGELargeEN (1024-dim, better quality), BGEBaseEN 768-dim
-const denseModel = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallEN });
+let _denseModel: FlagEmbedding | null = null;
+let _splade: SparseTextEmbedding | null = null;
 
-const splade = await SparseTextEmbedding.init({ model: SparseEmbeddingModel.SpladePPEnV1 });
+async function getDenseModel(): Promise<FlagEmbedding> {
+    if (!_denseModel) {
+        console.log("[embed] Initializing BGE-small-en dense model...");
+        _denseModel = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallEN });
+    }
+    return _denseModel;
+}
+
+async function getSplade(): Promise<SparseTextEmbedding> {
+    if (!_splade) {
+        console.log("[embed] Initializing SPLADE sparse model...");
+        _splade = await SparseTextEmbedding.init({ model: SparseEmbeddingModel.SpladePPEnV1 });
+    }
+    return _splade;
+}
 
 /** Free HF Inference cross-encoder (optional token raises rate limits). */
 const CROSS_ENCODER_MODEL =
@@ -15,9 +29,10 @@ const hf = new InferenceClient(process.env.HF_TOKEN ?? process.env.HUGGINGFACE_A
 
 export async function getDenseVectors(texts: string[]): Promise<number[][]> {
     console.log(`[embed:getDenseVectors] Embedding ${texts.length} text(s) — first text: "${texts[0]?.slice(0, 80) ?? "none"}"`);
+    const model = await getDenseModel();
     const vectors: number[][] = [];
     let batchCount = 0;
-    for await (const batch of denseModel.embed(texts, 6)) {
+    for await (const batch of model.embed(texts, 6)) {
         vectors.push(...batch);
         batchCount++;
     }
@@ -27,9 +42,10 @@ export async function getDenseVectors(texts: string[]): Promise<number[][]> {
 
 export async function getSparseVectors(texts: string[]) {
     console.log(`[embed:getSparseVectors] Embedding ${texts.length} text(s) with SPLADE`);
+    const model = await getSplade();
     const embeddings = [];
     let batchCount = 0;
-    for await (const batch of splade.embed(texts, 6)) {
+    for await (const batch of model.embed(texts, 6)) {
         // each item: { indices: number[], values: number[] }
         embeddings.push(...batch);
         batchCount++;

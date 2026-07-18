@@ -8,7 +8,7 @@ const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const DLQ_GROUP = process.env.DLQ_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 
-async function processDlqMessage(docId: string) {
+export async function processDlqMessage(docId: string) {
     console.log(`[dlq] Processing DLQ entry for docId="${docId}"`);
 
     try {
@@ -32,7 +32,7 @@ async function processDlqMessage(docId: string) {
     }
 }
 
-async function dlqLoop() {
+export async function dlqLoop() {
     console.log(`[dlq] Started — listening on "${DLQ_STREAM}"`);
 
     while (true) {
@@ -51,5 +51,7 @@ async function dlqLoop() {
     }
 }
 
-await ensureStream(DLQ_STREAM, DLQ_GROUP);
-await dlqLoop();
+if (import.meta.path === Bun.main) {
+    await ensureStream(DLQ_STREAM, DLQ_GROUP);
+    await dlqLoop();
+}

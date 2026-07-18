@@ -46,7 +46,7 @@ function getModality(mimeType: string): string {
     return "unknown";
 }
 
-async function ensureAllStreams() {
+export async function ensureAllStreams() {
     const groups = [
         { stream: FILES_STREAM, group: FILES_GROUP },
         { stream: PDF_STREAM, group: process.env.PDF_GROUP! },
@@ -62,7 +62,7 @@ async function ensureAllStreams() {
     }
 }
 
-async function routeDocument(docId: string) {
+export async function routeDocument(docId: string) {
     const doc = await prismaClient.document.findUnique({
         where: { id: docId },
         select: { mimeType: true, id: true },
@@ -97,7 +97,7 @@ async function routeDocument(docId: string) {
     console.log(`[dispatcher] Routed docId="${docId}" to ${targetStream}`);
 }
 
-async function dispatcherLoop() {
+export async function dispatcherLoop() {
     console.log(`[dispatcher] Started — listening on "${FILES_STREAM}"`);
 
     while (true) {
@@ -116,16 +116,18 @@ async function dispatcherLoop() {
     }
 }
 
-await ensureAllStreams();
-await Promise.all([
-    dispatcherLoop(),
-    startClaimLoop({
-        stream: FILES_STREAM,
-        group: FILES_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => routeDocument(p.docId),
-    }, CLAIM_INTERVAL_MS),
-]);
+if (import.meta.path === Bun.main) {
+    await ensureAllStreams();
+    await Promise.all([
+        dispatcherLoop(),
+        startClaimLoop({
+            stream: FILES_STREAM,
+            group: FILES_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => routeDocument(p.docId!),
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}

@@ -18,7 +18,7 @@ const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
 // Placeholder — will wire vision model + OCR in Phase 2
-async function processImage(docId: string) {
+export async function processImage(docId: string) {
     console.log(`[image-worker] Processing docId="${docId}"`);
 
     const doc = await prismaClient.document.findUnique({
@@ -58,7 +58,7 @@ async function processImage(docId: string) {
     console.log(`[image-worker] Pushed chunkSetId="${chunkSet.id}" to embed_stream`);
 }
 
-async function imageWorkerLoop() {
+export async function imageWorkerLoop() {
     console.log(`[image-worker] Started — listening on "${IMAGE_STREAM}"`);
     while (true) {
         const msg = await xReadGroupFromStream(IMAGE_STREAM, IMAGE_GROUP, WORKER_ID, 1, 5000);
@@ -73,16 +73,18 @@ async function imageWorkerLoop() {
     }
 }
 
-await ensureStream(IMAGE_STREAM, IMAGE_GROUP);
-await Promise.all([
-    imageWorkerLoop(),
-    startClaimLoop({
-        stream: IMAGE_STREAM,
-        group: IMAGE_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => processImage(p.docId as string),
-    }, CLAIM_INTERVAL_MS),
-]);
+if (import.meta.path === Bun.main) {
+    await ensureStream(IMAGE_STREAM, IMAGE_GROUP);
+    await Promise.all([
+        imageWorkerLoop(),
+        startClaimLoop({
+            stream: IMAGE_STREAM,
+            group: IMAGE_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => processImage(p.docId as string),
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}

@@ -22,7 +22,7 @@ import { createParseJob, getFinishedJob } from "../parse.ts";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "../chunk.ts"
 import { openrouterClient } from "@repo/openrouter/client"
-import { type Tier } from "../index.ts"
+import { type Tier } from "../index.ts";
 
 const PDF_STREAM = process.env.PDF_STREAM as string;
 const PDF_GROUP = process.env.PDF_GROUP as string;
@@ -175,7 +175,7 @@ async function documentStillExists(documentId: string): Promise<boolean> {
     return Boolean(row);
 }
 
-async function processPdfDocument(docId: string, pricingTier: PricingTier = "basic") {
+export async function processPdfDocument(docId: string, pricingTier: PricingTier = "basic") {
     return startActiveObservation(
         "process-document",
         async (root) => {
@@ -323,7 +323,7 @@ async function processPdfDocument(docId: string, pricingTier: PricingTier = "bas
     );
 }
 
-async function pdfWorkerLoop() {
+export async function pdfWorkerLoop() {
     console.log(`[pdf-worker] Started — listening on "${PDF_STREAM}"`);
 
     while (true) {
@@ -343,16 +343,18 @@ async function pdfWorkerLoop() {
     }
 }
 
-await ensureStreams();
-await Promise.all([
-    pdfWorkerLoop(),
-    startClaimLoop({
-        stream: PDF_STREAM,
-        group: PDF_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => processPdfDocument(p.docId as string, "basic"),
-    }, CLAIM_INTERVAL_MS),
-]);
+if (import.meta.path === Bun.main) {
+    await ensureStreams();
+    await Promise.all([
+        pdfWorkerLoop(),
+        startClaimLoop({
+            stream: PDF_STREAM,
+            group: PDF_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => processPdfDocument(p.docId as string, "basic"),
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}

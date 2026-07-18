@@ -16,7 +16,7 @@ const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
 // Placeholder — Phase 2: scene detection → keyframe extraction → scene_stream
-async function processVideo(docId: string) {
+export async function processVideo(docId: string) {
     console.log(`[video-worker] Processing docId="${docId}"`);
 
     const doc = await prismaClient.document.findUnique({
@@ -41,7 +41,7 @@ async function processVideo(docId: string) {
     });
 }
 
-async function videoWorkerLoop() {
+export async function videoWorkerLoop() {
     console.log(`[video-worker] Started — listening on "${VIDEO_STREAM}"`);
     while (true) {
         const msg = await xReadGroupFromStream(VIDEO_STREAM, VIDEO_GROUP, WORKER_ID, 1, 5000);
@@ -56,16 +56,18 @@ async function videoWorkerLoop() {
     }
 }
 
-await ensureStream(VIDEO_STREAM, VIDEO_GROUP);
-await Promise.all([
-    videoWorkerLoop(),
-    startClaimLoop({
-        stream: VIDEO_STREAM,
-        group: VIDEO_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => processVideo(p.docId as string),
-    }, CLAIM_INTERVAL_MS),
-]);
+if (import.meta.path === Bun.main) {
+    await ensureStream(VIDEO_STREAM, VIDEO_GROUP);
+    await Promise.all([
+        videoWorkerLoop(),
+        startClaimLoop({
+            stream: VIDEO_STREAM,
+            group: VIDEO_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => processVideo(p.docId as string),
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}

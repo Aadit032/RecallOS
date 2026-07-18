@@ -16,7 +16,7 @@ const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
 // Placeholder — Phase 2: keyframe → OCR → vision → transcript → ParsedChunkSet
-async function processScene(docId: string, sceneIndex: string) {
+export async function processScene(docId: string, sceneIndex: string) {
     console.log(`[scene-worker] Processing docId="${docId}", sceneIndex="${sceneIndex}"`);
 
     // TODO: Phase 2 — keyframe extraction → OCR → vision model → transcript → ParsedChunkSet
@@ -40,7 +40,7 @@ async function processScene(docId: string, sceneIndex: string) {
     console.log(`[scene-worker] Pushed chunkSetId="${chunkSet.id}" to embed_stream`);
 }
 
-async function sceneWorkerLoop() {
+export async function sceneWorkerLoop() {
     console.log(`[scene-worker] Started — listening on "${SCENE_STREAM}"`);
     while (true) {
         const msg = await xReadGroupFromStream(SCENE_STREAM, SCENE_GROUP, WORKER_ID, 1, 5000);
@@ -56,16 +56,18 @@ async function sceneWorkerLoop() {
     }
 }
 
-await ensureStream(SCENE_STREAM, SCENE_GROUP);
-await Promise.all([
-    sceneWorkerLoop(),
-    startClaimLoop({
-        stream: SCENE_STREAM,
-        group: SCENE_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => processScene(p.docId as string, p.sceneIndex ?? "0"),
-    }, CLAIM_INTERVAL_MS),
-]);
+if (import.meta.path === Bun.main) {
+    await ensureStream(SCENE_STREAM, SCENE_GROUP);
+    await Promise.all([
+        sceneWorkerLoop(),
+        startClaimLoop({
+            stream: SCENE_STREAM,
+            group: SCENE_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => processScene(p.docId as string, p.sceneIndex ?? "0"),
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}

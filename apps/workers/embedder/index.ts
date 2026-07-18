@@ -25,7 +25,7 @@ async function ensureStreams() {
     await ensureStream(EMBED_STREAM, EMBED_GROUP);
 }
 
-async function embedChunkSet(chunkSetId: string) {
+export async function embedChunkSet(chunkSetId: string) {
     return startActiveObservation(
         "embed-chunk-set",
         async (root) => {
@@ -129,7 +129,7 @@ async function embedChunkSet(chunkSetId: string) {
     );
 }
 
-async function embedderLoop() {
+export async function embedderLoop() {
     console.log(`[embedder] Started — listening on "${EMBED_STREAM}"`);
 
     while (true) {
@@ -149,32 +149,32 @@ async function embedderLoop() {
     }
 }
 
-await ensureStreams();
-await Promise.all([
-    embedderLoop(),
-    startClaimLoop({
-        stream: EMBED_STREAM,
-        group: EMBED_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => embedChunkSet(p.chunkSetId as string),
-        onMaxRetries: async (p) => {
-            const chunkSetId = p.chunkSetId;
-            const chunkSet = await prismaClient.parsedChunkSet.findUnique({
-                where: { id: chunkSetId },
-                select: { documentId: true },
-            });
-            const docId = chunkSet?.documentId;
-            if (docId) {
-                await prismaClient.document.update({
-                    where: { id: docId },
-                    data: { status: "FAILED" },
+if (import.meta.path === Bun.main) {
+    await ensureStreams();
+    await Promise.all([
+        embedderLoop(),
+        startClaimLoop({
+            stream: EMBED_STREAM,
+            group: EMBED_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => embedChunkSet(p.chunkSetId as string),
+            onMaxRetries: async (p) => {
+                const chunkSetId = p.chunkSetId;
+                const chunkSet = await prismaClient.parsedChunkSet.findUnique({
+                    where: { id: chunkSetId },
+                    select: { documentId: true },
                 });
-                // no need to push to DLQ, since it already marks as FAILED
-                // await xAddToStream(DLQ_STREAM, { docId });
-            }
-        },
-    }, CLAIM_INTERVAL_MS),
-]);
+                const docId = chunkSet?.documentId;
+                if (docId) {
+                    await prismaClient.document.update({
+                        where: { id: docId },
+                        data: { status: "FAILED" },
+                    });
+                }
+            },
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}

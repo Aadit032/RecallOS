@@ -16,7 +16,7 @@ const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
 // Placeholder — will wire Whisper + semantic chunking in Phase 2
-async function processAudio(docId: string) {
+export async function processAudio(docId: string) {
     console.log(`[audio-worker] Processing docId="${docId}"`);
 
     const doc = await prismaClient.document.findUnique({
@@ -55,7 +55,7 @@ async function processAudio(docId: string) {
     await xAddToStream(EMBED_STREAM, { chunkSetId: chunkSet.id });
 }
 
-async function audioWorkerLoop() {
+export async function audioWorkerLoop() {
     console.log(`[audio-worker] Started — listening on "${AUDIO_STREAM}"`);
     while (true) {
         const msg = await xReadGroupFromStream(AUDIO_STREAM, AUDIO_GROUP, WORKER_ID, 1, 5000);
@@ -70,16 +70,18 @@ async function audioWorkerLoop() {
     }
 }
 
-await ensureStream(AUDIO_STREAM, AUDIO_GROUP);
-await Promise.all([
-    audioWorkerLoop(),
-    startClaimLoop({
-        stream: AUDIO_STREAM,
-        group: AUDIO_GROUP,
-        workerId: WORKER_ID,
-        dlqStream: DLQ_STREAM,
-        idleThresholdMs: IDLE_THRESHOLD_MS,
-        maxRetries: MAX_RETRIES,
-        processFn: async (p) => processAudio(p.docId as string),
-    }, CLAIM_INTERVAL_MS),
-]);
+if (import.meta.path === Bun.main) {
+    await ensureStream(AUDIO_STREAM, AUDIO_GROUP);
+    await Promise.all([
+        audioWorkerLoop(),
+        startClaimLoop({
+            stream: AUDIO_STREAM,
+            group: AUDIO_GROUP,
+            workerId: WORKER_ID,
+            dlqStream: DLQ_STREAM,
+            idleThresholdMs: IDLE_THRESHOLD_MS,
+            maxRetries: MAX_RETRIES,
+            processFn: async (p) => processAudio(p.docId as string),
+        }, CLAIM_INTERVAL_MS),
+    ]);
+}
