@@ -4,14 +4,16 @@ dotenv.config();
 import { initTracing, startActiveObservation, propagateAttributes } from "@repo/langfuse/client";
 initTracing({ serviceName: "embedding-worker" });
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream, xAutoClaimOnStream } from "@repo/redis-stream/client";
+import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
 import { getDenseVectors, getSparseVectors } from "@repo/embed/client";
 import { qdrantClient } from "@repo/qdrant/client";
 import { v4 as uuidv4 } from "uuid";
+import { startClaimLoop } from "../common/claimStaleJobs.ts";
 
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
 const EMBED_GROUP = process.env.EMBED_GROUP as string;
+const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 const COLLECTION = process.env.COLLECTION as string;
 
@@ -134,7 +136,7 @@ async function embedderLoop() {
         const msg = await xReadGroupFromStream(EMBED_STREAM, EMBED_GROUP, WORKER_ID, 1, 5000);
         if (!msg) continue;
 
-        const chunkSetId = msg.message.chunkSetId;
+        const chunkSetId = msg.message.chunkSetId as string;
         console.log(`[embedder] Received chunkSetId="${chunkSetId}"`);
 
         try {
@@ -147,29 +149,32 @@ async function embedderLoop() {
     }
 }
 
-async function claimStaleJobs() {
-    const claimed = await xAutoClaimOnStream(EMBED_STREAM, EMBED_GROUP, WORKER_ID, IDLE_THRESHOLD_MS, 10);
-    for (const msg of claimed) {
-        const chunkSetId = msg.message.chunkSetId;
-        console.log(`[embedder:claim] Claimed chunkSetId="${chunkSetId}"`);
-        try {
-            await embedChunkSet(chunkSetId);
-            await xAckOnStream(EMBED_STREAM, EMBED_GROUP, msg.id);
-        } catch (e) {
-            console.error(`[embedder:claim] Error:`, e);
-        }
-    }
-}
-
-async function claimLoop() {
-    while (true) {
-        await claimStaleJobs();
-        await new Promise(resolve => setTimeout(resolve, CLAIM_INTERVAL_MS));
-    }
-}
-
 await ensureStreams();
 await Promise.all([
     embedderLoop(),
-    claimLoop(),
+    startClaimLoop({
+        stream: EMBED_STREAM,
+        group: EMBED_GROUP,
+        workerId: WORKER_ID,
+        dlqStream: DLQ_STREAM,
+        idleThresholdMs: IDLE_THRESHOLD_MS,
+        maxRetries: MAX_RETRIES,
+        processFn: async (p) => embedChunkSet(p.chunkSetId as string),
+        onMaxRetries: async (p) => {
+            const chunkSetId = p.chunkSetId;
+            const chunkSet = await prismaClient.parsedChunkSet.findUnique({
+                where: { id: chunkSetId },
+                select: { documentId: true },
+            });
+            const docId = chunkSet?.documentId;
+            if (docId) {
+                await prismaClient.document.update({
+                    where: { id: docId },
+                    data: { status: "FAILED" },
+                });
+                // no need to push to DLQ, since it already marks as FAILED
+                // await xAddToStream(DLQ_STREAM, { docId });
+            }
+        },
+    }, CLAIM_INTERVAL_MS),
 ]);

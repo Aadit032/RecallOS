@@ -1,16 +1,28 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { initTracing, startActiveObservation, withGeneration, propagateAttributes, truncateForTrace, type OpenRouterUsageLike } from "@repo/langfuse/client";
+import { 
+    initTracing, 
+    startActiveObservation, 
+    withGeneration, 
+    propagateAttributes, 
+    truncateForTrace, 
+    type OpenRouterUsageLike 
+} from "@repo/langfuse/client";
 initTracing({ serviceName: "pdf-worker" });
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream, xAutoClaimOnStream, xPendingRangeOnStream } from "@repo/redis-stream/client";
-import LlamaCloud from '@llamaindex/llama-cloud';
+import { 
+    ensureStream, 
+    xReadGroupFromStream, 
+    xAckOnStream, 
+    xAddToStream, 
+} from "@repo/redis-stream/client";
+import { startClaimLoop } from "../common/claimStaleJobs.ts";
 import { createParseJob, getFinishedJob } from "../parse.ts";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "../chunk.ts"
 import { openrouterClient } from "@repo/openrouter/client"
-import { v4 as uuidv4 } from "uuid"
+import { type Tier } from "../index.ts"
 
 const PDF_STREAM = process.env.PDF_STREAM as string;
 const PDF_GROUP = process.env.PDF_GROUP as string;
@@ -22,13 +34,10 @@ const DLQ_GROUP = process.env.DLQ_GROUP as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 const CONTEXT_MODEL = process.env.CONTEXT_MODEL as string;
 
-export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
-
 const MAX_RETRIES = 10;
 const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
-export type Tier = "fast" | "cost_effective" | "agentic" | "agentic_plus";
 type PricingTier = "basic" | "pro" | "max";
 
 async function ensureStreams() {
@@ -321,7 +330,7 @@ async function pdfWorkerLoop() {
         const msg = await xReadGroupFromStream(PDF_STREAM, PDF_GROUP, WORKER_ID, 1, 5000);
         if (!msg) continue;
 
-        const docId = msg.message.docId;
+        const docId = msg.message.docId as string;
         console.log(`[pdf-worker] Received docId="${docId}"`);
 
         try {
@@ -334,49 +343,16 @@ async function pdfWorkerLoop() {
     }
 }
 
-async function claimStaleJobs() {
-    console.log(`[pdf-worker:claimStaleJobs] Checking for stale jobs (idle > ${IDLE_THRESHOLD_MS}ms)`);
-    const claimed = await xAutoClaimOnStream(PDF_STREAM, PDF_GROUP, WORKER_ID, IDLE_THRESHOLD_MS, 10);
-
-    for (const msg of claimed) {
-        const docId = msg.message.docId;
-        console.log(`[pdf-worker:claimStaleJobs] Claimed docId="${docId}"`);
-
-        const pendingInfo = await xPendingRangeOnStream(PDF_STREAM, PDF_GROUP, msg.id, msg.id, 1);
-        const deliveryCount = pendingInfo?.[0]?.deliveryCount ?? 1;
-
-        if (deliveryCount > MAX_RETRIES) {
-            console.log(`[pdf-worker] deliveryCount ${deliveryCount} > ${MAX_RETRIES} — moving to DLQ`);
-            try {
-                await prismaClient.document.update({
-                    where: { id: docId },
-                    data: { status: "FAILED" },
-                });
-            } catch (e) {
-                console.log(`Could not mark FAILED:`, e);
-            }
-            await xAddToStream(DLQ_STREAM, { docId });
-            await xAckOnStream(PDF_STREAM, PDF_GROUP, msg.id);
-        } else {
-            try {
-                await processPdfDocument(docId, "basic");
-                await xAckOnStream(PDF_STREAM, PDF_GROUP, msg.id);
-            } catch (e) {
-                console.log(`Error processing claimed docId="${docId}":`, e);
-            }
-        }
-    }
-}
-
-async function claimLoop() {
-    while (true) {
-        await claimStaleJobs();
-        await new Promise(resolve => setTimeout(resolve, CLAIM_INTERVAL_MS));
-    }
-}
-
 await ensureStreams();
 await Promise.all([
     pdfWorkerLoop(),
-    claimLoop(),
+    startClaimLoop({
+        stream: PDF_STREAM,
+        group: PDF_GROUP,
+        workerId: WORKER_ID,
+        dlqStream: DLQ_STREAM,
+        idleThresholdMs: IDLE_THRESHOLD_MS,
+        maxRetries: MAX_RETRIES,
+        processFn: async (p) => processPdfDocument(p.docId as string, "basic"),
+    }, CLAIM_INTERVAL_MS),
 ]);

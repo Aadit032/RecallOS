@@ -3,11 +3,17 @@ dotenv.config();
 
 import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
+import { startClaimLoop } from "../common/claimStaleJobs.ts";
 
 const AUDIO_STREAM = process.env.AUDIO_STREAM as string;
 const AUDIO_GROUP = process.env.AUDIO_GROUP as string;
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
+const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
+
+const MAX_RETRIES = 5;
+const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const CLAIM_INTERVAL_MS = 30 * 1000;
 
 // Placeholder — will wire Whisper + semantic chunking in Phase 2
 async function processAudio(docId: string) {
@@ -54,7 +60,7 @@ async function audioWorkerLoop() {
     while (true) {
         const msg = await xReadGroupFromStream(AUDIO_STREAM, AUDIO_GROUP, WORKER_ID, 1, 5000);
         if (!msg) continue;
-        const docId = msg.message.docId;
+        const docId = msg.message.docId as string;
         try {
             await processAudio(docId);
             await xAckOnStream(AUDIO_STREAM, AUDIO_GROUP, msg.id);
@@ -65,4 +71,15 @@ async function audioWorkerLoop() {
 }
 
 await ensureStream(AUDIO_STREAM, AUDIO_GROUP);
-await audioWorkerLoop();
+await Promise.all([
+    audioWorkerLoop(),
+    startClaimLoop({
+        stream: AUDIO_STREAM,
+        group: AUDIO_GROUP,
+        workerId: WORKER_ID,
+        dlqStream: DLQ_STREAM,
+        idleThresholdMs: IDLE_THRESHOLD_MS,
+        maxRetries: MAX_RETRIES,
+        processFn: async (p) => processAudio(p.docId as string),
+    }, CLAIM_INTERVAL_MS),
+]);

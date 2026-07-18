@@ -27,9 +27,7 @@ try {
     console.log(`[redis-stream] Consumer group "${GROUP_NAME}" already exists`);
 }
 
-/**
- * Ensure a stream + consumer group exist (idempotent).
- */
+//  Ensure a stream + consumer group exist (idempotent).
 export async function ensureStream(stream: string, group: string): Promise<void> {
     try {
         await redisClient.xGroupCreate(stream, group, "0", { MKSTREAM: true });
@@ -216,9 +214,7 @@ export async function removeDocumentFromStream(
         removed += 1;
     };
 
-    if (streamMessageId) {
-        await removeOne(streamMessageId);
-    }
+    if (streamMessageId) await removeOne(streamMessageId);
 
     try {
         let start = "-";
@@ -228,9 +224,7 @@ export async function removeDocumentFromStream(
             if (!messages.length) break;
             for (const msg of messages) {
                 const msgDocId = msg.message?.documentId;
-                if (msgDocId === documentId) {
-                    await removeOne(msg.id);
-                }
+                if (msgDocId === documentId) await removeOne(msg.id);
             }
             const lastId = messages[messages.length - 1]!.id;
             if (messages.length < COUNT) break;

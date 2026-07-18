@@ -2,6 +2,11 @@
  * Dev runner — spawns all modality workers concurrently.
  * Run individual workers with: bun run <worker>/index.ts
  */
+import LlamaCloud from '@llamaindex/llama-cloud';
+
+export const llamaClient = new LlamaCloud({ apiKey: process.env['LLAMA_CLOUD_API_KEY'] });
+
+export type Tier = "fast" | "cost_effective" | "agentic" | "agentic_plus";
 
 const workers = [
     "dispatcher",
@@ -23,6 +28,4 @@ const processes = workers.map((name) =>
     })
 );
 
-for (const proc of processes) {
-    await proc.exited;
-}
+for (const proc of processes) await proc.exited;

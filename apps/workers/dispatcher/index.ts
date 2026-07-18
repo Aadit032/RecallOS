@@ -6,6 +6,7 @@ initTracing({ serviceName: "dispatcher-worker" });
 
 import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
+import { startClaimLoop } from "../common/claimStaleJobs.ts";
 
 const FILES_STREAM = process.env.FILES_STREAM as string;
 const FILES_GROUP = process.env.FILES_GROUP as string;
@@ -13,8 +14,13 @@ const PDF_STREAM = process.env.PDF_STREAM as string;
 const IMAGE_STREAM = process.env.IMAGE_STREAM as string;
 const AUDIO_STREAM = process.env.AUDIO_STREAM as string;
 const VIDEO_STREAM = process.env.VIDEO_STREAM as string;
+const DLQ_STREAM = process.env.DLQ_STREAM as string;
 
 const WORKER_ID = process.env.WORKER_ID as string;
+
+const MAX_RETRIES = 5;
+const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const CLAIM_INTERVAL_MS = 30 * 1000;
 
 const modalityStreams: Record<string, string> = {
     "application/pdf": PDF_STREAM,
@@ -56,6 +62,41 @@ async function ensureAllStreams() {
     }
 }
 
+async function routeDocument(docId: string) {
+    const doc = await prismaClient.document.findUnique({
+        where: { id: docId },
+        select: { mimeType: true, id: true },
+    });
+
+    if (!doc) {
+        console.log(`[dispatcher] Document ${docId} not found — skipping`);
+        return;
+    }
+
+    const mimeType = doc.mimeType;
+    const targetStream = modalityStreams[mimeType];
+
+    if (!targetStream) {
+        console.log(`[dispatcher] No route for mimeType="${mimeType}" — marking FAILED`);
+        await prismaClient.document.update({
+            where: { id: docId },
+            data: { status: "FAILED" },
+        });
+        return;
+    }
+
+    const modality = getModality(mimeType);
+    console.log(`[dispatcher] Routing docId="${docId}" (${mimeType}) → "${targetStream}"`);
+
+    await prismaClient.document.update({
+        where: { id: docId },
+        data: { status: "QUEUED", modality },
+    });
+
+    await xAddToStream(targetStream, { docId });
+    console.log(`[dispatcher] Routed docId="${docId}" to ${targetStream}`);
+}
+
 async function dispatcherLoop() {
     console.log(`[dispatcher] Started — listening on "${FILES_STREAM}"`);
 
@@ -63,46 +104,12 @@ async function dispatcherLoop() {
         const msg = await xReadGroupFromStream(FILES_STREAM, FILES_GROUP, WORKER_ID, 1, 5000);
         if (!msg) continue;
 
-        const docId = msg.message.docId;
+        const docId = msg.message.docId as string;
         console.log(`[dispatcher] Received docId="${docId}"`);
 
         try {
-            const doc = await prismaClient.document.findUnique({
-                where: { id: docId },
-                select: { mimeType: true, id: true },
-            });
-
-            if (!doc) {
-                console.log(`[dispatcher] Document ${docId} not found — acking`);
-                await xAckOnStream(FILES_STREAM, FILES_GROUP, msg.id);
-                continue;
-            }
-
-            const mimeType = doc.mimeType;
-            const targetStream = modalityStreams[mimeType];
-
-            if (!targetStream) {
-                console.log(`[dispatcher] No route for mimeType="${mimeType}" — marking FAILED`);
-                await prismaClient.document.update({
-                    where: { id: docId },
-                    data: { status: "FAILED" },
-                });
-                await xAckOnStream(FILES_STREAM, FILES_GROUP, msg.id);
-                continue;
-            }
-
-            const modality = getModality(mimeType);
-            console.log(`[dispatcher] Routing docId="${docId}" (${mimeType}) → "${targetStream}"`);
-
-            await prismaClient.document.update({
-                where: { id: docId },
-                data: { status: "QUEUED", modality },
-            });
-
-            await xAddToStream(targetStream, { docId });
+            await routeDocument(docId);
             await xAckOnStream(FILES_STREAM, FILES_GROUP, msg.id);
-
-            console.log(`[dispatcher] Routed docId="${docId}" to ${targetStream}`);
         } catch (e) {
             console.error(`[dispatcher] Error processing docId="${docId}":`, e);
         }
@@ -110,4 +117,15 @@ async function dispatcherLoop() {
 }
 
 await ensureAllStreams();
-await dispatcherLoop();
+await Promise.all([
+    dispatcherLoop(),
+    startClaimLoop({
+        stream: FILES_STREAM,
+        group: FILES_GROUP,
+        workerId: WORKER_ID,
+        dlqStream: DLQ_STREAM,
+        idleThresholdMs: IDLE_THRESHOLD_MS,
+        maxRetries: MAX_RETRIES,
+        processFn: async (p) => routeDocument(p.docId),
+    }, CLAIM_INTERVAL_MS),
+]);
