@@ -10,6 +10,7 @@ import { sceneWorkerLoop, processScene } from "./scene/index.ts";
 import { embedderLoop, embedChunkSet } from "./embedder/index.ts";
 import { dlqLoop, processDlqMessage } from "./dlq/index.ts";
 import { prismaClient } from "@repo/prisma/client";
+import { startClaimLoop } from "./common/claimStaleJobs.ts";
 dotenv.config();
 
 initTracing({ serviceName: "recall-os-workers" });
@@ -19,7 +20,6 @@ export type Tier = "fast" | "cost_effective" | "agentic" | "agentic_plus";
 
 console.log("[workers:runner] Starting all workers in a single process");
 
-import { startClaimLoop } from "./common/claimStaleJobs.ts";
 
 const FILES_STREAM = process.env.FILES_STREAM as string;
 const FILES_GROUP = process.env.FILES_GROUP as string;
