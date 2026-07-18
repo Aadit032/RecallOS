@@ -23,15 +23,19 @@ A multimodal memory architecture for persistent retrieval over heterogeneous ent
 
 **Implemented**
 
-- PDF upload via MinIO presigned URLs
-- Async ingestion workers (Redis Streams + LlamaParse)
+- Multi-modality upload (PDF, images, audio, video) via MinIO presigned URLs
+- Modality-aware ingestion pipeline with per-modality parser workers
+- Dispatcher worker routes by MIME type → modality-specific Redis Streams
+- Decoupled embedding worker (modality-agnostic, re-embeddable without reparsing)
 - Hybrid search in Qdrant (dense BGE + sparse SPLADE, fused with RRF)
 - Cross-encoder rerank → top chunks into the LLM
-- Streaming chat with source chunk citations
+- Streaming chat with source chunk citations + optional modality filter
 - Optional web research agent (`/web` + Exa)
 - Projects with custom system prompts
 - Chat history, pin/delete, and rolling conversation summaries
 - Langfuse tracing for chat and ingest
+- Dead Letter Queue for failed document processing
+- `ParsedChunkSet` / `ParsedChunk` models for re-embeddable parsed output
 
 ---
 
@@ -64,7 +68,16 @@ A multimodal memory architecture for persistent retrieval over heterogeneous ent
 apps/
   web/          # Next.js UI (auth, dashboard, chat)
   backend/      # Express API + web agent
-  workers/      # Document ingest pipeline
+  workers/      # Multimodal ingestion workers
+    dispatcher/ # Routes files_stream → modality streams
+    pdf/        # LlamaParse → chunking → ParsedChunkSet
+    image/      # Vision model + OCR (placeholder)
+    audio/      # Whisper → transcript (placeholder)
+    video/      # Scene detection (placeholder)
+    scene/      # Keyframe → OCR + vision (placeholder)
+    embedder/   # Modality-agnostic dense/sparse embed → Qdrant
+    dlq/        # Dead Letter Queue reprocessing
+    common/     # Shared helpers (MinIO download, etc.)
 
 packages/
   db/           # Prisma schema + client (@repo/prisma)
@@ -88,29 +101,33 @@ specs/          # Design notes used while building features
 ```text
   +-----------+         presigned PUT          +--------+
   |  Next.js  | -----------------------------> | MinIO  |
-  |   web     |                                | (PDFs) |
+  |   web     |                                |(assets)|
   +-----+-----+                                +---+----+
         |                                          |
         | REST (JWT)                               | object key
         v                                          |
-  +-----+-----+     xAdd(userId, documentId)  +----v-----+
+  +-----+-----+    xAdd to files_stream       +----v-----+
   |  Express  | ----------------------------> |  Redis   |
   |  backend  |                               | Streams  |
   +-----+-----+                               +----+-----+
         |                                          |
-        | hybrid query + chat                      | XREADGROUP
-        |                                          v
-        |                                   +------+------+
-        |                                   |   workers   |
-        |                                   | LlamaParse  |
-        |                                   | chunk/embed |
-        |                                   +------+------+
+        | hybrid query + chat                      | Dispatcher
+        |                                          | (routes by MIME)
+        v                                          v
+  +-----------+                            +-------+--------+
+  |  Qdrant   |                            | pdf_stream     |
+  | dense+    | <--- embed_stream          | image_stream   |
+  | splade    |                            | audio_stream   |
+  +-----------+    embedding worker        | video_stream   |
+                                           +-------+--------+
         |                                          |
-        |              +-----------+               |
-        +------------> |  Qdrant   | <-------------+
-        |              | dense+    |   upsert points
-        |              | splade    |
-        |              +-----------+
+        |             +-----------+                |
+        +-----------> | Postgres  | <--------------+
+                      |  + users  |    Parser workers
+                      |  + docs   |    (per modality)
+                      |  + chunks |
+                      |  + chats  |
+                      +-----------+
         |
         v
   +-----------+
@@ -122,27 +139,37 @@ specs/          # Design notes used while building features
 
 # Ingestion Pipeline
 
-Only **PDFs** are accepted (`application/pdf`).
+Documents of any modality are accepted (PDF, images, audio, video).
 
 ```text
 1. Client requests presigned URL  →  POST /api/v1/upload/post-file-url
 2. Client uploads bytes to MinIO
 3. Client confirms upload         →  POST /api/v1/upload/confirm
       • verifies object size
-      • creates Document (status QUEUED)
-      • enqueues Redis Stream job
-4. Worker claims job (XREADGROUP)
-5. Status → PROCESSING
-6. LlamaParse → markdown
-7. Semantic-ish chunking (headings → paragraphs, overlap)
-8. Dense (BGE) + sparse (SPLADE) embeddings
-9. Upsert points into Qdrant (payload: text, userId, documentId, chunkIndex)
-10. Status → COMPLETED (or FAILED)
+      • creates Document (status UPLOADED)
+      • enqueues on files_stream
+4. Dispatcher reads files_stream, determines MIME type
+5. Routes to modality stream: pdf_stream / image_stream / audio_stream / video_stream
+6. Status → QUEUED
+7. Modality parser worker claims job (XREADGROUP)
+8. Status → PARSING
+9. Modality-specific parsing:
+   - PDF:    LlamaParse → markdown → semantic chunking
+   - Image:  Vision model + OCR → description
+   - Audio:  Whisper → transcript → semantic chunking
+   - Video:  Scene detection → keyframe + OCR + vision + transcript
+10. Creates ParsedChunkSet + ParsedChunks in DB
+11. Pushes chunkSetId onto embed_stream
+12. Status → PARSED
+13. Embedding worker (modality-agnostic) claims job
+14. Status → EMBEDDING
+15. Dense (BGE) + sparse (SPLADE) embeddings → upsert to Qdrant
+16. Status → READY (or FAILED on error)
 ```
 
-Workers also run a **stale-job reclaimer** (`XAUTOCLAIM`) on an interval: if a job is idle too long it is claimed by a live worker; after too many deliveries the document is marked `FAILED` and ACKed.
+Each stream has its own consumer group. Workers run a **stale-job reclaimer** (`XAUTOCLAIM`) per stream. After `MAX_RETRIES`, jobs move to a **Dead Letter Queue** (`dlq_stream`) for reprocessing or permanent failure.
 
-Contextual chunk enrichment (LLM situates each chunk in the document) exists in the worker for non-`basic` pricing tiers; the default worker path currently processes as `basic` (parse → chunk → embed, no per-chunk LLM context).
+Contextual chunk enrichment (LLM situates each chunk in the document) exists for non-`basic` pricing tiers.
 
 ---
 
@@ -217,25 +244,27 @@ Document delete removes the Postgres row, MinIO object, stream job (if still que
 
 | Model      | Role                                                                                            |
 | ---------- | ----------------------------------------------------------------------------------------------- |
-| `User`     | Username + hashed password                                                                      |
-| `Document` | Title, object key, status (`QUEUED` / `PROCESSING` / `COMPLETED` / `FAILED`), stream message id |
-| `Project`  | Named workspace + optional system prompt                                                        |
-| `Chat`     | Title, pin, optional project, summary fields                                                    |
-| `Message`  | role, content, `sourceChunks` JSON                                                              |
-| `Memory`   | Schema present for durable facts (not wired into chat yet)                                      |
+| `User`           | Username + hashed password                                                              |
+| `Document`       | Title, object key, `mimeType`, `modality`, status (`UPLOADED` → `READY` / `FAILED`)    |
+| `ParsedChunkSet` | Group of parsed chunks for a document, per-modality, status (`PARSED` / `INDEXED`)     |
+| `ParsedChunk`    | Individual text chunk with JSON metadata (page, timestamp, caption, OCR, etc.)         |
+| `Project`        | Named workspace + optional system prompt                                                |
+| `Chat`           | Title, pin, optional project, summary fields                                            |
+| `Message`        | role, content, `sourceChunks` JSON                                                      |
+| `Memory`         | Schema present for durable facts (not wired into chat yet)                              |
 
-Chunk vectors live only in **Qdrant**, not as a Postgres table.
+Chunk vectors live in **Qdrant** with payload including `documentId`, `chunkId`, `modality`, `page`, `timestamps`, `caption`. Chunk text is stored in both `ParsedChunk` (Postgres) and Qdrant.
 
 ---
 
 # Storage Roles
 
-| Store             | What it holds                                     |
-| ----------------- | ------------------------------------------------- |
-| **MinIO**         | Original PDF objects                              |
-| **PostgreSQL**    | Users, docs, chats, messages, projects            |
-| **Redis Streams** | Ingest job queue + consumer group PEL             |
-| **Qdrant**        | Per-chunk dense + SPLADE vectors and text payload |
+| Store             | What it holds                                                  |
+| ----------------- | -------------------------------------------------------------- |
+| **MinIO**         | Original asset files (PDF, images, audio, video)               |
+| **PostgreSQL**    | Users, docs, chunk sets, chunks, chats, messages, projects     |
+| **Redis Streams** | Multi-stream job queue per modality + consumer group PEL + DLQ |
+| **Qdrant**        | Per-chunk dense + SPLADE vectors and text payload with modality metadata |
 
 There is **no OpenSearch** in this codebase. Lexical signal comes from **SPLADE sparse vectors** inside Qdrant, fused with dense cosine via RRF.
 
@@ -299,6 +328,8 @@ bun run --filter workers dev   # or: cd apps/workers && bun run index.ts
 - **User scoped** — retrieval and deletes are filtered by ownership
 - **Modular monorepo** — shared clients in `packages/*`
 - **Observable** — optional Langfuse traces end to end
+- **Decoupled parsing & embedding** — re-embed without reparsing via `ParsedChunkSet`
+- **Extensible modalities** — new types need only a new parser worker; downstream pipeline unchanged
 
 ---
 <!-- 

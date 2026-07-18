@@ -42,7 +42,7 @@ type RetrievedChunk = {
  * fused with Reciprocal Rank Fusion in Qdrant → top 50.
  * Scoped to the requesting user's chunks only.
  */
-async function hybridRetrieve(userId: string, query: string): Promise<RetrievedChunk[]> {
+async function hybridRetrieve(userId: string, query: string, modality?: string): Promise<RetrievedChunk[]> {
     return startActiveObservation(
         "hybrid-retrieve",
         async (retriever) => {
@@ -66,7 +66,11 @@ async function hybridRetrieve(userId: string, query: string): Promise<RetrievedC
                 return [];
             }
 
-            const filter = { must: [{ key: "documentId", match: { any: ownedDocumentIds } }] };
+            const mustConditions: Record<string, unknown>[] = [{ key: "documentId", match: { any: ownedDocumentIds } }];
+            if (modality) {
+                mustConditions.push({ key: "modality", match: { value: modality } });
+            }
+            const filter = { must: mustConditions };
 
             console.log(`[hybridRetrieve] Starting retrieval for userId=${userId}, query: "${query.slice(0, 120)}"`);
             const [denseVectors, sparseVectors] = await Promise.all([
@@ -613,7 +617,7 @@ chatRouter.post("/message", async (req, res) => {
         return;
     }
 
-    const { message, chatId, userAgent } = parsed.data;
+    const { message, chatId, userAgent, modality } = parsed.data;
     const webMode = isWebSearchCommand(message);
     const webQuery = webMode ? stripWebPrefix(message) : "";
     console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}, webMode=${webMode}`);
@@ -907,7 +911,7 @@ chatRouter.post("/message", async (req, res) => {
 
         // 3. Hybrid retrieval (dense + sparse → RRF top 50)
         console.log(`[POST /message] Step 3 — Hybrid retrieval for: "${message.slice(0, 120)}"`);
-        const fusedChunks = await hybridRetrieve(userId, message);
+        const fusedChunks = await hybridRetrieve(userId, message, modality);
         console.log(`[POST /message] Hybrid retrieval returned ${fusedChunks.length} fused chunks`);
 
         // 4. Cross-encoder rerank → top 5

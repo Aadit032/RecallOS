@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils"
 const API_BASE_UPLOAD = "http://localhost:3000/api/v1/upload"
 const API_BASE_DOWNLOAD = "http://localhost:3000/api/v1/download"
 
-type DocStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED"
+type DocStatus = "UPLOADED" | "QUEUED" | "PARSING" | "PARSED" | "EMBEDDING" | "INDEXED" | "READY" | "FAILED"
 
 type DocumentItem = {
   id: string
@@ -60,16 +60,36 @@ function formatDate(iso: string) {
   })
 }
 
+function statusLabel(status: DocStatus): string {
+  switch (status) {
+    case "UPLOADED": return "Uploaded"
+    case "QUEUED": return "Queued"
+    case "PARSING": return "Parsing"
+    case "PARSED": return "Parsed"
+    case "EMBEDDING": return "Embedding"
+    case "INDEXED": return "Indexed"
+    case "READY": return "Ready"
+    case "FAILED": return "Failed"
+    default: return status
+  }
+}
+
 function statusVariant(
   status: DocStatus
 ): "default" | "secondary" | "outline" | "destructive" {
   switch (status) {
-    case "COMPLETED":
+    case "READY":
       return "default"
     case "FAILED":
       return "destructive"
-    case "PROCESSING":
+    case "PARSING":
+    case "EMBEDDING":
       return "secondary"
+    case "UPLOADED":
+    case "QUEUED":
+    case "PARSED":
+    case "INDEXED":
+      return "outline"
     default:
       return "outline"
   }
@@ -88,13 +108,18 @@ const pipeline = [
   },
   {
     step: "03",
-    title: "Queue",
-    body: "Document is pushed onto Redis Streams.",
+    title: "Dispatch",
+    body: "Dispatcher routes to the correct modality worker.",
   },
   {
     step: "04",
-    title: "Index",
-    body: "Workers parse, chunk, and embed in the background.",
+    title: "Parse",
+    body: "Modality worker parses content into text chunks.",
+  },
+  {
+    step: "05",
+    title: "Embed",
+    body: "Embedding worker generates vectors and indexes into Qdrant.",
   },
 ]
 
@@ -199,6 +224,7 @@ export default function Dashboard() {
             fileName: file.name,
             key,
             size: file.size,
+            contentType: file.type,
           },
           {
             headers: {
@@ -271,6 +297,8 @@ export default function Dashboard() {
   const isPdf =
     file?.type === "application/pdf" || file?.name.toLowerCase().endsWith(".pdf")
   const isImage = Boolean(file?.type.startsWith("image/"))
+  const isAudio = Boolean(file?.type.startsWith("audio/"))
+  const isVideo = Boolean(file?.type.startsWith("video/"))
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -338,7 +366,7 @@ export default function Dashboard() {
               <Input
                 id="file"
                 type="file"
-                accept=".pdf,application/pdf,image/*"
+                accept=".pdf,application/pdf,image/*,audio/*,video/*"
                 className="h-12 cursor-pointer border-input bg-muted/40 pr-3 file:mr-4 file:h-full file:cursor-pointer file:rounded-md file:border-0 file:bg-primary file:px-4 file:text-sm file:font-semibold file:text-primary-foreground file:transition-colors hover:file:bg-primary/90"
                 onChange={(e) => {
                   const selected = e.target.files?.[0]
@@ -386,6 +414,16 @@ export default function Dashboard() {
                       alt={`Preview of ${file.name}`}
                       className="max-h-[26rem] max-w-full object-contain"
                     />
+                  </div>
+                ) : isVideo ? (
+                  <video
+                    src={previewUrl}
+                    controls
+                    className="max-h-[28rem] w-full rounded-md bg-muted/10"
+                  />
+                ) : isAudio ? (
+                  <div className="flex h-20 items-center justify-center bg-muted/10 rounded-md">
+                    <audio src={previewUrl} controls className="w-full max-w-md px-4" />
                   </div>
                 ) : (
                   <div className="flex h-40 flex-col items-center justify-center gap-2 text-center">
@@ -526,10 +564,10 @@ export default function Dashboard() {
                   className={cn(
                     "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5",
                     idx < documents.length - 1 && "border-b border-border/60",
-                    doc.status === "COMPLETED" && "bg-emerald-500/10 backdrop-blur-sm border-l-2 border-l-emerald-500/30",
-                    doc.status === "PROCESSING" && "bg-muted/40 border-l-2 border-l-muted-foreground/20",
+                    doc.status === "READY" && "bg-emerald-500/10 backdrop-blur-sm border-l-2 border-l-emerald-500/30",
+                    (doc.status === "PARSING" || doc.status === "EMBEDDING") && "bg-muted/40 border-l-2 border-l-muted-foreground/20",
                     doc.status === "FAILED" && "bg-red-500/10 border-l-2 border-l-red-500/30",
-                    doc.status === "QUEUED" && "bg-transparent border-2 border-dashed border-muted-foreground/30 my-1 rounded-lg",
+                    (doc.status === "UPLOADED" || doc.status === "QUEUED" || doc.status === "PARSED" || doc.status === "INDEXED") && "bg-transparent border-2 border-dashed border-muted-foreground/30 my-1 rounded-lg",
                   )}
                 >
                   <div className="flex min-w-0 items-start gap-3">
@@ -550,7 +588,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex shrink-0 items-center gap-2 sm:pl-4">
                     <Badge variant={statusVariant(doc.status)}>
-                      {doc.status}
+                      {statusLabel(doc.status)}
                     </Badge>
                     <Button
                       variant="outline"

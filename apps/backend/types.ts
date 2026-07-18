@@ -15,6 +15,8 @@ export const messageSchema = z.object({
     chatId: z.string().uuid().optional(),
     /** Browser user-agent — injected into the system prompt, not stored as user text */
     userAgent: z.string().max(1000).optional(),
+    /** Optional modality filter: "pdf" | "image" | "audio" | "video" */
+    modality: z.string().optional(),
 });
 
 export const bodySchema = z.object({

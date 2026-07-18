@@ -3,11 +3,26 @@ import { s3 } from "@repo/minio/client"
 import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { prismaClient } from "@repo/prisma/client"
-import { xAdd } from "@repo/redis-stream/client"
+import { xAddToStream } from "@repo/redis-stream/client"
 
 const uploadRouter = Router();
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME
+const FILES_STREAM = process.env.FILES_STREAM ?? "files_stream";
+
+function keyPrefix(mimeType: string): string {
+    if (mimeType.startsWith("image/")) return "image";
+    if (mimeType.startsWith("audio/")) return "audio";
+    if (mimeType.startsWith("video/")) return "video";
+    return "pdf";
+}
+
+function modalityFromMime(mimeType: string): string {
+    if (mimeType.startsWith("image/")) return "image";
+    if (mimeType.startsWith("audio/")) return "audio";
+    if (mimeType.startsWith("video/")) return "video";
+    return "pdf";
+}
 
 uploadRouter.post("/post-file-url", async (req, res) => {
     const userId = req.userId;
@@ -26,15 +41,9 @@ uploadRouter.post("/post-file-url", async (req, res) => {
         return;
     }
 
-    const ALLOWED_TYPES = ["application/pdf"];
-    if (!ALLOWED_TYPES.includes(contentType)) {
-        console.warn(`[upload:post-file-url] Unsupported content type: "${contentType}"`);
-        res.status(400).json({ message: "Unsupported content type" });
-        return;
-    }
-
     const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const key = `pdf/${safeFileName}-${crypto.randomUUID()}`;
+    const prefix = keyPrefix(contentType);
+    const key = `${prefix}/${safeFileName}-${crypto.randomUUID()}`;
     console.log(`[upload:post-file-url] Generated S3 key: "${key}"`);
 
     const command = new PutObjectCommand({
@@ -52,9 +61,10 @@ uploadRouter.post("/post-file-url", async (req, res) => {
 
 
 uploadRouter.post("/confirm", async (req, res) => {
-    const { fileName, key, size } = req.body;
+    const { fileName, key, size, contentType } = req.body;
     const userId = req.userId
-    console.log(`[upload:confirm] Entry — userId=${userId}, fileName="${fileName}", key="${key}", size=${size}`);
+    const mimeType = contentType || (key?.startsWith("image/") ? "image/png" : key?.startsWith("audio/") ? "audio/mpeg" : key?.startsWith("video/") ? "video/mp4" : "application/pdf");
+    console.log(`[upload:confirm] Entry — userId=${userId}, fileName="${fileName}", key="${key}", size=${size}, mimeType="${mimeType}"`);
 
     if (!key || !fileName || !userId || !size) {
         console.warn(`[upload:confirm] Missing required fields`);
@@ -86,7 +96,9 @@ uploadRouter.post("/confirm", async (req, res) => {
                     title: fileName,
                     ObjectKey: key,
                     userId,
-                    status: "QUEUED"
+                    mimeType,
+                    modality: modalityFromMime(mimeType),
+                    status: "UPLOADED"
                 }
             });
             console.log(`[upload:confirm] Document created: id=${document.id}`);
@@ -102,14 +114,14 @@ uploadRouter.post("/confirm", async (req, res) => {
 
         }
         if (isNew) {
-            console.log(`[upload:confirm] Pushing document ${document.id} onto Redis stream`);
-            const messageId = await xAdd(userId, document.id);
+            console.log(`[upload:confirm] Pushing document ${document.id} onto files_stream`);
+            const messageId = await xAddToStream(FILES_STREAM, { docId: document.id });
             if (!messageId) {
-                console.error(`[upload:confirm] Failed to push onto queue`);
+                console.error(`[upload:confirm] Failed to push onto files_stream`);
                 res.status(500).json({ message: "The file was not pushed on the queue." });
                 return;
             }
-            console.log(`[upload:confirm] Pushed to stream: messageId=${messageId}`);
+            console.log(`[upload:confirm] Pushed to files_stream: messageId=${messageId}`);
             try {
                 document = await prismaClient.document.update({
                     where: { id: document.id },

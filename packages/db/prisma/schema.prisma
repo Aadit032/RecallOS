@@ -36,9 +36,15 @@ model Memory {
 }
 
 enum DocumentStatus {
+  UPLOADED
   QUEUED
+  PARSING
   PROCESSING
+  PARSED
+  EMBEDDING
+  INDEXED
   COMPLETED
+  READY
   FAILED
 }
 
@@ -46,8 +52,10 @@ model Document {
   id              String         @id @default(uuid())
   title           String
   content         String?
+  mimeType        String         @default("application/pdf")
+  modality        String         @default("pdf")
   ObjectKey       String         @unique
-  status          DocumentStatus @default(QUEUED)
+  status          DocumentStatus @default(UPLOADED)
   streamMessageId String?
 
   createdAt DateTime @default(now())
@@ -56,7 +64,34 @@ model Document {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  chunkSets ParsedChunkSet[]
+
   @@index([userId])
+}
+
+model ParsedChunkSet {
+  id         String   @id @default(uuid())
+  modality   String
+  status     String   @default("PARSED")
+  createdAt  DateTime @default(now())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  chunks ParsedChunk[]
+
+  @@index([documentId])
+}
+
+model ParsedChunk {
+  id        String   @id @default(uuid())
+  text      String
+  metadata  Json?
+
+  chunkSetId String
+  chunkSet   ParsedChunkSet @relation(fields: [chunkSetId], references: [id], onDelete: Cascade)
+
+  @@index([chunkSetId])
 }
 
 model Project {

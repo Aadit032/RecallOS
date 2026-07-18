@@ -3,7 +3,7 @@ import { prismaClient } from "@repo/prisma/client";
 import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3"
 import { s3 } from "@repo/minio/client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { removeDocumentFromStream } from "@repo/redis-stream/client";
+import { removeDocumentFromStream, removeDocumentFromAllStreams } from "@repo/redis-stream/client";
 import { qdrantClient } from "@repo/qdrant/client";
 import dotenv from "dotenv"
 dotenv.config();
@@ -122,9 +122,29 @@ downloadRouter.delete("/:id", async (req, res) => {
             return;
         }
 
-        // 1. Remove from Redis stream so workers stop / never start
+        // 1. Remove from all Redis streams so workers stop / never start
         try {
-            await removeDocumentFromStream(doc.id);
+            const streams = [
+                process.env.FILES_STREAM ?? "files_stream",
+                process.env.PDF_STREAM ?? "pdf_stream",
+                process.env.IMAGE_STREAM ?? "image_stream",
+                process.env.AUDIO_STREAM ?? "audio_stream",
+                process.env.VIDEO_STREAM ?? "video_stream",
+                process.env.SCENE_STREAM ?? "scene_stream",
+                process.env.EMBED_STREAM ?? "embed_stream",
+                process.env.DLQ_STREAM ?? "dlq_stream",
+            ];
+            const groups = [
+                process.env.FILES_GROUP ?? "files-workers",
+                process.env.PDF_GROUP ?? "pdf-workers",
+                process.env.IMAGE_GROUP ?? "image-workers",
+                process.env.AUDIO_GROUP ?? "audio-workers",
+                process.env.VIDEO_GROUP ?? "video-workers",
+                process.env.SCENE_GROUP ?? "scene-workers",
+                process.env.EMBED_GROUP ?? "embedding-workers",
+                process.env.DLQ_GROUP ?? "dlq-workers",
+            ];
+            await removeDocumentFromAllStreams(doc.id, streams, groups);
             console.log(`[download:delete] Stream cleanup done for ${doc.id}`);
         } catch (e) {
             console.error(`[download:delete] Stream cleanup failed:`, e);

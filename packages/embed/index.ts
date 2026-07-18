@@ -2,7 +2,7 @@ import { FlagEmbedding, EmbeddingModel } from "fastembed";
 import { SparseTextEmbedding, SparseEmbeddingModel } from "fastembed";
 import { InferenceClient } from "@huggingface/inference";
 
-// other options: BGESmallEN (384-dim, faster), BGELargeEN (1024-dim, better quality) BGEBaseEN 768-dim
+// other options: BGESmallEN (384-dim, faster), BGELargeEN (1024-dim, better quality), BGEBaseEN 768-dim
 const denseModel = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallEN });
 
 const splade = await SparseTextEmbedding.init({ model: SparseEmbeddingModel.SpladePPEnV1 });
