@@ -36,7 +36,7 @@ const SCENE_GROUP = process.env.SCENE_GROUP as string;
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
 const EMBED_GROUP = process.env.EMBED_GROUP as string;
 const DLQ_STREAM = process.env.DLQ_STREAM as string;
-const DLQ_GROUP = process.env.DLQ_GROUP as string;
+// const DLQ_GROUP = process.env.DLQ_GROUP as string;
 
 const WORKER_ID = process.env.WORKER_ID as string;
 
@@ -113,7 +113,13 @@ async function main() {
             dlqStream: DLQ_STREAM,
             idleThresholdMs: IDLE_THRESHOLD_MS,
             maxRetries: 5,
-            processFn: async (p) => processScene(p.docId!, p.sceneIndex ?? "0"),
+            processFn: async (p) =>
+                processScene(
+                    p.docId!,
+                    p.sceneIndex ?? "0",
+                    p.timestampStart,
+                    p.timestampEnd
+                ),
         }, CLAIM_INTERVAL_MS),
 
         embedderLoop(),

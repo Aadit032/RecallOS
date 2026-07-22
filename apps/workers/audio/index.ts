@@ -4,6 +4,10 @@ dotenv.config();
 import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
 import { startClaimLoop } from "../common/claimStaleJobs.ts";
+import { downloadToDisk } from "../common/download.ts";
+import { cleanupTemp, extFromKey, makeTempDir } from "../common/temp.ts";
+import { chunkTranscript, transcribeAudioFile } from "../common/transcribe.ts";
+import path from "path";
 
 const AUDIO_STREAM = process.env.AUDIO_STREAM as string;
 const AUDIO_GROUP = process.env.AUDIO_GROUP as string;
@@ -15,7 +19,6 @@ const MAX_RETRIES = 5;
 const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
-// Placeholder — will wire Whisper + semantic chunking in Phase 2
 export async function processAudio(docId: string) {
     console.log(`[audio-worker] Processing docId="${docId}"`);
 
@@ -23,36 +26,77 @@ export async function processAudio(docId: string) {
         where: { id: docId },
         select: { ObjectKey: true, id: true },
     });
-    if (!doc) return;
+    if (!doc) {
+        console.log(`[audio-worker] Document ${docId} not found — skipping`);
+        return;
+    }
 
     await prismaClient.document.update({
         where: { id: docId },
         data: { status: "PARSING" },
     });
 
-    // TODO: Phase 2 — Download audio → Whisper → transcript → semantic chunking
-    const chunkSet = await prismaClient.parsedChunkSet.create({
-        data: {
-            documentId: docId,
-            modality: "audio",
-            status: "PARSED",
-            chunks: {
-                create: [
-                    {
-                        text: `[Audio worker] Placeholder for audio ${doc.ObjectKey}`,
-                        metadata: { timestampStart: null, timestampEnd: null },
-                    },
-                ],
+    const tmpDir = makeTempDir("recallos-audio-");
+    try {
+        const ext = extFromKey(doc.ObjectKey, "mp3");
+        const localPath = path.join(tmpDir, `audio.${ext}`);
+        await downloadToDisk(doc.ObjectKey, localPath);
+        console.log(`[audio-worker] Downloaded ${doc.ObjectKey} → ${localPath}`);
+
+        const transcript = await transcribeAudioFile(localPath);
+        console.log(
+            `[audio-worker] Transcript: ${transcript.text.length} chars, ${transcript.segments.length} segments`
+        );
+
+        if (!transcript.text.trim()) {
+            throw new Error("Whisper returned empty transcript");
+        }
+
+        const timedChunks = chunkTranscript(transcript);
+        console.log(`[audio-worker] Chunks: ${timedChunks.length}`);
+
+        const chunkSet = await prismaClient.parsedChunkSet.create({
+            data: {
+                documentId: docId,
+                modality: "audio",
+                status: "PARSED",
+                chunks: {
+                    create: timedChunks.map((c, i) => ({
+                        text: c.text,
+                        metadata: {
+                            chunkIndex: i,
+                            timestampStart: c.timestampStart,
+                            timestampEnd: c.timestampEnd,
+                            language: transcript.language ?? null,
+                            duration: transcript.duration ?? null,
+                        },
+                    })),
+                },
             },
-        },
-    });
+        });
 
-    await prismaClient.document.update({
-        where: { id: docId },
-        data: { status: "PARSED" },
-    });
+        await prismaClient.document.update({
+            where: { id: docId },
+            data: { status: "PARSED" },
+        });
 
-    await xAddToStream(EMBED_STREAM, { chunkSetId: chunkSet.id });
+        await xAddToStream(EMBED_STREAM, { chunkSetId: chunkSet.id });
+        console.log(`[audio-worker] Pushed chunkSetId="${chunkSet.id}" to embed_stream`);
+    } catch (e) {
+        console.error(`[audio-worker] Failed docId="${docId}":`, e);
+        try {
+            await prismaClient.document.update({
+                where: { id: docId },
+                data: { status: "FAILED" },
+            });
+        } catch {
+            /* ignore */
+        }
+        await xAddToStream(DLQ_STREAM, { docId });
+        // Swallow after DLQ so the stream message can be ACKed (matches pdf worker).
+    } finally {
+        cleanupTemp(tmpDir);
+    }
 }
 
 export async function audioWorkerLoop() {
