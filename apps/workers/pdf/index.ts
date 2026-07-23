@@ -18,7 +18,7 @@ import {
     xAddToStream, 
 } from "@repo/redis-stream/client";
 import { startClaimLoop } from "../common/claimStaleJobs.ts";
-import { createParseJob, getFinishedJob } from "../parse.ts";
+import { createParseJob, getFinishedJob } from "../common/parse.ts";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "../common/chunk.ts"
 import { openrouterClient } from "@repo/openrouter/client"
@@ -312,7 +312,6 @@ export async function processPdfDocument(docId: string, pricingTier: PricingTier
                             output: { status: "ERROR" },
                         });
 
-                        // Move to DLQ on repeated failure
                         await xAddToStream(DLQ_STREAM, { docId });
                     }
                 }

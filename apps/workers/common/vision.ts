@@ -14,19 +14,17 @@ export type VisionResult = {
  * Returns a caption + OCR text; falls back to free-form description if JSON parse fails.
  */
 export async function describeImage(imageUrl: string): Promise<VisionResult> {
-    if (!VISION_MODEL) {
-        throw new Error("VISION_MODEL is not set");
-    }
+    if (!VISION_MODEL) throw new Error("VISION_MODEL is not set");
 
     const prompt = `Analyze this image for a retrieval/search system.
 
-Respond with ONLY valid JSON (no markdown fences) matching:
-{
-  "caption": "A clear 1-3 sentence description of the image content, layout, and purpose",
-  "ocr": "All readable text in the image, preserving structure with newlines when helpful. Empty string if none."
-}
+        Respond with ONLY valid JSON (no markdown fences) matching:
+        {
+            "caption": "A clear 1-3 sentence description of the image content, layout, and purpose",
+            "ocr": "All readable text in the image, preserving structure with newlines when helpful. Empty string if none."
+        }
 
-Be accurate. Do not invent text that is not visible.`;
+        Be accurate. Do not invent text that is not visible.`;
 
     const response = await openrouterClient.chat.send({
         chatRequest: {
@@ -47,9 +45,7 @@ Be accurate. Do not invent text that is not visible.`;
     });
 
     const raw = (response?.choices?.[0]?.message?.content ?? "").trim();
-    if (!raw) {
-        throw new Error("Vision model returned empty content");
-    }
+    if (!raw) throw new Error("Vision model returned empty content");
 
     return parseVisionResponse(raw);
 }

@@ -49,9 +49,7 @@ export async function processImage(docId: string) {
         const dataUrl = fileToDataUrl(localPath, mime);
 
         const vision = await describeImage(dataUrl);
-        console.log(
-            `[image-worker] Vision done — caption=${vision.caption.length}c ocr=${vision.ocr.length}c`
-        );
+        console.log(`[image-worker] Vision done — caption=${vision.caption.length}c ocr=${vision.ocr.length}c`);
 
         const chunkSet = await prismaClient.parsedChunkSet.create({
             data: {
@@ -88,10 +86,9 @@ export async function processImage(docId: string) {
                 data: { status: "FAILED" },
             });
         } catch {
-            /* ignore */
+            console.error(`[image-worker] Failed to mark docId="${docId}" as FAILED`);
         }
         await xAddToStream(DLQ_STREAM, { docId });
-        // Swallow after DLQ so the stream message can be ACKed (matches pdf worker).
     } finally {
         cleanupTemp(tmpDir);
     }

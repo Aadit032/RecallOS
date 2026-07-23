@@ -87,9 +87,9 @@ export async function processAudio(docId: string) {
             });
         } catch {
             /* ignore */
+            console.error(`[audio-worker] Failed to mark docId="${docId}" as FAILED`);
         }
         await xAddToStream(DLQ_STREAM, { docId });
-        // Swallow after DLQ so the stream message can be ACKed (matches pdf worker).
     } finally {
         cleanupTemp(tmpDir);
     }
