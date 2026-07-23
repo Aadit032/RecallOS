@@ -27,7 +27,7 @@ try {
     console.log(`[redis-stream] Consumer group "${GROUP_NAME}" already exists`);
 }
 
-//  Ensure a stream + consumer group exist (idempotent).
+//  Ensure a stream + consumer group exist (idempotent)
 export async function ensureStream(stream: string, group: string): Promise<void> {
     try {
         await redisClient.xGroupCreate(stream, group, "0", { MKSTREAM: true });
@@ -49,10 +49,6 @@ export async function xAddToStream(stream: string, fields: Record<string, string
         console.error(`[redis-stream:xAddToStream] Failed:`, e);
         return null;
     }
-}
-
-export async function xAdd(userId: string, documentId: string): Promise<string | null>{
-    return xAddToStream(STREAM_NAME, { userId, documentId });
 }
 
 type streamMessage = { 
@@ -79,10 +75,6 @@ export async function xReadGroupFromStream(
     }
 }
 
-export async function xReadGroup(consumerGroup: string, workerId: string): Promise<streamMessage | undefined> {
-    return xReadGroupFromStream(STREAM_NAME, consumerGroup, workerId);
-}
-
 export async function xAckOnStream(stream: string, consumerGroup: string, eventId: string): Promise<number | null> {
     try {
         const res = await redisClient.xAck(stream, consumerGroup, eventId);
@@ -91,10 +83,6 @@ export async function xAckOnStream(stream: string, consumerGroup: string, eventI
         console.error(`[redis-stream:xAckOnStream] Failed:`, e);
         return null;
     }
-}
-
-export async function xAck(consumerGroup: string, eventId: string): Promise<number | null> {
-    return xAckOnStream(STREAM_NAME, consumerGroup, eventId);
 }
 
 export async function xAutoClaimOnStream(
@@ -123,15 +111,6 @@ export async function xAutoClaimOnStream(
     }
 }
 
-export async function xAutoClaim(
-    consumerGroup: string,
-    consumerId: string,
-    minIdleTime: number,
-    count?: number
-): Promise<streamMessage[]> {
-    return xAutoClaimOnStream(STREAM_NAME, consumerGroup, consumerId, minIdleTime, count);
-}
-
 export async function xPendingRangeOnStream(
     stream: string,
     consumerGroup: string,
@@ -152,15 +131,6 @@ export async function xPendingRangeOnStream(
     }
 }
 
-export async function xPendingRange(
-    consumerGroup: string,
-    start: string,
-    end: string,
-    count: number
-): Promise<Array<{ id: string; consumer: string; deliveryCount: number }>> {
-    return xPendingRangeOnStream(STREAM_NAME, consumerGroup, start, end, count);
-}
-
 export async function xDelOnStream(stream: string, messageId: string): Promise<number | null> {
     try {
         return await redisClient.xDel(stream, messageId);
@@ -168,22 +138,6 @@ export async function xDelOnStream(stream: string, messageId: string): Promise<n
         console.error(`[redis-stream:xDelOnStream] Failed:`, e);
         return null;
     }
-}
-
-export async function xDel(messageId: string): Promise<number | null> {
-    return xDelOnStream(STREAM_NAME, messageId);
-}
-
-export async function removeStreamMessage(
-    consumerGroup: string,
-    messageId: string
-): Promise<void> {
-    try {
-        await xAck(consumerGroup, messageId);
-    } catch (e) {
-        console.warn(`[redis-stream:removeStreamMessage] Ack failed:`, e);
-    }
-    await xDel(messageId);
 }
 
 export async function removeStreamMessageOnStream(
@@ -197,44 +151,6 @@ export async function removeStreamMessageOnStream(
         console.warn(`[redis-stream:removeStreamMessageOnStream] Ack failed:`, e);
     }
     await xDelOnStream(stream, messageId);
-}
-
-export async function removeDocumentFromStream(
-    documentId: string,
-    streamMessageId?: string | null
-): Promise<number> {
-    const group = GROUP_NAME;
-    let removed = 0;
-    const seen = new Set<string>();
-
-    const removeOne = async (id: string) => {
-        if (seen.has(id)) return;
-        seen.add(id);
-        await removeStreamMessage(group, id);
-        removed += 1;
-    };
-
-    if (streamMessageId) await removeOne(streamMessageId);
-
-    try {
-        let start = "-";
-        const COUNT = 100;
-        for (let i = 0; i < 50; i++) {
-            const messages = await redisClient.xRange(STREAM_NAME, start, "+", { COUNT });
-            if (!messages.length) break;
-            for (const msg of messages) {
-                const msgDocId = msg.message?.documentId;
-                if (msgDocId === documentId) await removeOne(msg.id);
-            }
-            const lastId = messages[messages.length - 1]!.id;
-            if (messages.length < COUNT) break;
-            start = `(${lastId}`;
-        }
-    } catch (e) {
-        console.error(`[redis-stream:removeDocumentFromStream] Scan failed:`, e);
-    }
-
-    return removed;
 }
 
 export async function removeDocumentFromAllStreams(

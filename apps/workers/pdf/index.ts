@@ -40,10 +40,6 @@ const CLAIM_INTERVAL_MS = 30 * 1000;
 
 type PricingTier = "basic" | "pro" | "max";
 
-async function ensureStreams() {
-    await ensureStream(PDF_STREAM, PDF_GROUP);
-}
-
 async function getContextChunks(chunks: Chunk[], full_doc: string): Promise<Chunk[]>{
     return startActiveObservation("contextualize-chunks", async (span) => {
         span.update({
@@ -344,7 +340,7 @@ export async function pdfWorkerLoop() {
 }
 
 if (import.meta.path === Bun.main) {
-    await ensureStreams();
+    await ensureStream(PDF_STREAM, PDF_GROUP);
     await Promise.all([
         pdfWorkerLoop(),
         startClaimLoop({

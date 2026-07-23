@@ -3,7 +3,7 @@ import { prismaClient } from "@repo/prisma/client";
 import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3"
 import { s3 } from "@repo/minio/client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { removeDocumentFromStream, removeDocumentFromAllStreams } from "@repo/redis-stream/client";
+import { removeDocumentFromAllStreams } from "@repo/redis-stream/client";
 import { qdrantClient } from "@repo/qdrant/client";
 import dotenv from "dotenv"
 dotenv.config();
