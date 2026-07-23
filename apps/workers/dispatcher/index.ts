@@ -6,7 +6,6 @@ initTracing({ serviceName: "dispatcher-worker" });
 
 import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
-import { startClaimLoop } from "../common/claimStaleJobs.ts";
 
 const FILES_STREAM = process.env.FILES_STREAM as string;
 const FILES_GROUP = process.env.FILES_GROUP as string;
@@ -14,13 +13,8 @@ const PDF_STREAM = process.env.PDF_STREAM as string;
 const IMAGE_STREAM = process.env.IMAGE_STREAM as string;
 const AUDIO_STREAM = process.env.AUDIO_STREAM as string;
 const VIDEO_STREAM = process.env.VIDEO_STREAM as string;
-const DLQ_STREAM = process.env.DLQ_STREAM as string;
 
 const WORKER_ID = process.env.WORKER_ID as string;
-
-const MAX_RETRIES = 5;
-const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const CLAIM_INTERVAL_MS = 30 * 1000;
 
 const modalityStreams: Record<string, string> = {
     "application/pdf": PDF_STREAM,
@@ -116,18 +110,4 @@ export async function dispatcherLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureAllStreams();
-    await Promise.all([
-        dispatcherLoop(),
-        startClaimLoop({
-            stream: FILES_STREAM,
-            group: FILES_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: MAX_RETRIES,
-            processFn: async (p) => routeDocument(p.docId!),
-        }, CLAIM_INTERVAL_MS),
-    ]);
-}
+

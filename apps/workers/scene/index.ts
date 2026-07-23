@@ -1,9 +1,8 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
+import { xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
-import { startClaimLoop } from "../common/claimStaleJobs.ts";
 import { downloadToDisk } from "../common/download.ts";
 import { extractAudioClip, extractKeyframe } from "../common/ffmpeg.ts";
 import { cleanupTemp, extFromKey, fileToDataUrl, makeTempDir } from "../common/temp.ts";
@@ -16,10 +15,6 @@ const SCENE_GROUP = process.env.SCENE_GROUP as string;
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
 const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
-
-const MAX_RETRIES = 5;
-const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const CLAIM_INTERVAL_MS = 30 * 1000;
 
 export type SceneJob = {
     docId: string;
@@ -157,24 +152,4 @@ export async function sceneWorkerLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureStream(SCENE_STREAM, SCENE_GROUP);
-    await Promise.all([
-        sceneWorkerLoop(),
-        startClaimLoop({
-            stream: SCENE_STREAM,
-            group: SCENE_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: MAX_RETRIES,
-            processFn: async (p) =>
-                processScene(
-                    p.docId as string,
-                    p.sceneIndex ?? "0",
-                    p.timestampStart,
-                    p.timestampEnd
-                ),
-        }, CLAIM_INTERVAL_MS),
-    ]);
-}
+

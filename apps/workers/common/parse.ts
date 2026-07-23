@@ -1,7 +1,7 @@
 import { s3 } from "@repo/minio/client";
 import  { GetObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { llamaClient, type Tier } from "./index.ts";
+import { llamaClient, type Tier } from "../index.ts";
 import dotenv from "dotenv"
 import type { ParsingCreateResponse, ParsingGetResponse } from "@llamaindex/llama-cloud/resources";
 import fs from "fs";

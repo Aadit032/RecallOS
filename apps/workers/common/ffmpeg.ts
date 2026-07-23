@@ -26,9 +26,7 @@ async function runCmd(
         new Response(proc.stderr).text(),
         proc.exited,
     ]);
-    if (code !== 0 && !opts?.allowNonZero) {
-        throw new Error(`Command failed (${code}): ${cmd.join(" ")}\n${stderr.slice(-2000)}`);
-    }
+    if (code !== 0 && !opts?.allowNonZero) throw new Error(`Command failed (${code}): ${cmd.join(" ")}\n${stderr.slice(-2000)}`);
     return { stdout, stderr, code };
 }
 
@@ -45,9 +43,7 @@ export async function getDurationSeconds(mediaPath: string): Promise<number> {
         mediaPath,
     ]);
     const d = parseFloat(stdout.trim());
-    if (!Number.isFinite(d) || d <= 0) {
-        throw new Error(`Could not read duration for ${mediaPath}: "${stdout.trim()}"`);
-    }
+    if (!Number.isFinite(d) || d <= 0) throw new Error(`Could not read duration for ${mediaPath}: "${stdout.trim()}"`);
     return d;
 }
 

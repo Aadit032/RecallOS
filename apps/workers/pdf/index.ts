@@ -12,7 +12,6 @@ import {
 initTracing({ serviceName: "pdf-worker" });
 
 import { 
-    ensureStream, 
     xReadGroupFromStream, 
     xAckOnStream, 
     xAddToStream, 
@@ -341,18 +340,4 @@ export async function pdfWorkerLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureStream(PDF_STREAM, PDF_GROUP);
-    await Promise.all([
-        pdfWorkerLoop(),
-        startClaimLoop({
-            stream: PDF_STREAM,
-            group: PDF_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: MAX_RETRIES,
-            processFn: async (p) => processPdfDocument(p.docId as string, "basic"),
-        }, CLAIM_INTERVAL_MS),
-    ]);
-}
+

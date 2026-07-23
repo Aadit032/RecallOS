@@ -1,9 +1,8 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
+import { xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
-import { startClaimLoop } from "../common/claimStaleJobs.ts";
 import { downloadToDisk } from "../common/download.ts";
 import { detectScenes } from "../common/ffmpeg.ts";
 import { cleanupTemp, extFromKey, makeTempDir } from "../common/temp.ts";
@@ -14,10 +13,6 @@ const VIDEO_GROUP = process.env.VIDEO_GROUP as string;
 const SCENE_STREAM = process.env.SCENE_STREAM as string;
 const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
-
-const MAX_RETRIES = 5;
-const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const CLAIM_INTERVAL_MS = 30 * 1000;
 
 /**
  * Video workers only split videos into scenes and enqueue each scene.
@@ -99,18 +94,4 @@ export async function videoWorkerLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureStream(VIDEO_STREAM, VIDEO_GROUP);
-    await Promise.all([
-        videoWorkerLoop(),
-        startClaimLoop({
-            stream: VIDEO_STREAM,
-            group: VIDEO_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: MAX_RETRIES,
-            processFn: async (p) => processVideo(p.docId as string),
-        }, CLAIM_INTERVAL_MS),
-    ]);
-}
+

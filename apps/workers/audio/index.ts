@@ -1,9 +1,8 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
+import { xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
-import { startClaimLoop } from "../common/claimStaleJobs.ts";
 import { downloadToDisk } from "../common/download.ts";
 import { cleanupTemp, extFromKey, makeTempDir } from "../common/temp.ts";
 import { chunkTranscript, transcribeAudioFile } from "../common/transcribe.ts";
@@ -14,10 +13,6 @@ const AUDIO_GROUP = process.env.AUDIO_GROUP as string;
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
 const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
-
-const MAX_RETRIES = 5;
-const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const CLAIM_INTERVAL_MS = 30 * 1000;
 
 export async function processAudio(docId: string) {
     console.log(`[audio-worker] Processing docId="${docId}"`);
@@ -110,18 +105,4 @@ export async function audioWorkerLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureStream(AUDIO_STREAM, AUDIO_GROUP);
-    await Promise.all([
-        audioWorkerLoop(),
-        startClaimLoop({
-            stream: AUDIO_STREAM,
-            group: AUDIO_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: MAX_RETRIES,
-            processFn: async (p) => processAudio(p.docId as string),
-        }, CLAIM_INTERVAL_MS),
-    ]);
-}
+

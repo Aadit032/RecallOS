@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream } from "@repo/redis-stream/client";
+import { xReadGroupFromStream, xAckOnStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
 
 const DLQ_STREAM = process.env.DLQ_STREAM as string;
@@ -51,7 +51,4 @@ export async function dlqLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureStream(DLQ_STREAM, DLQ_GROUP);
-    await dlqLoop();
-}
+

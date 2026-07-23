@@ -4,26 +4,16 @@ dotenv.config();
 import { initTracing, startActiveObservation, propagateAttributes } from "@repo/langfuse/client";
 initTracing({ serviceName: "embedding-worker" });
 
-import { ensureStream, xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
+import { xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-stream/client";
 import { prismaClient } from "@repo/prisma/client";
 import { getDenseVectors, getSparseVectors } from "@repo/embed/client";
 import { qdrantClient } from "@repo/qdrant/client";
 import { v4 as uuidv4 } from "uuid";
-import { startClaimLoop } from "../common/claimStaleJobs.ts";
 
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
 const EMBED_GROUP = process.env.EMBED_GROUP as string;
-const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 const COLLECTION = process.env.COLLECTION as string;
-
-const MAX_RETRIES = 5;
-const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const CLAIM_INTERVAL_MS = 30 * 1000;
-
-async function ensureStreams() {
-    await ensureStream(EMBED_STREAM, EMBED_GROUP);
-}
 
 export async function embedChunkSet(chunkSetId: string) {
     return startActiveObservation(
@@ -149,32 +139,4 @@ export async function embedderLoop() {
     }
 }
 
-if (import.meta.path === Bun.main) {
-    await ensureStreams();
-    await Promise.all([
-        embedderLoop(),
-        startClaimLoop({
-            stream: EMBED_STREAM,
-            group: EMBED_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: MAX_RETRIES,
-            processFn: async (p) => embedChunkSet(p.chunkSetId as string),
-            onMaxRetries: async (p) => {
-                const chunkSetId = p.chunkSetId;
-                const chunkSet = await prismaClient.parsedChunkSet.findUnique({
-                    where: { id: chunkSetId },
-                    select: { documentId: true },
-                });
-                const docId = chunkSet?.documentId;
-                if (docId) {
-                    await prismaClient.document.update({
-                        where: { id: docId },
-                        data: { status: "FAILED" },
-                    });
-                }
-            },
-        }, CLAIM_INTERVAL_MS),
-    ]);
-}
+
