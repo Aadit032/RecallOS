@@ -20,10 +20,3 @@ export async function downloadToDisk(key: string, localPath: string): Promise<vo
         readStream.on("error", reject);
     });
 }
-
-export async function getObjectStream(key: string): Promise<Readable> {
-    const command = new GetObjectCommand({ Bucket: AWS_BUCKET_NAME, Key: key });
-    const response = await s3.send(command);
-    if (!response.Body) throw new Error("No body returned");
-    return response.Body as Readable;
-}

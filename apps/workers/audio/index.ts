@@ -44,13 +44,9 @@ export async function processAudio(docId: string) {
         console.log(`[audio-worker] Downloaded ${doc.ObjectKey} → ${localPath}`);
 
         const transcript = await transcribeAudioFile(localPath);
-        console.log(
-            `[audio-worker] Transcript: ${transcript.text.length} chars, ${transcript.segments.length} segments`
-        );
+        console.log(`[audio-worker] Transcript: ${transcript.text.length} chars, ${transcript.segments.length} segments`);
 
-        if (!transcript.text.trim()) {
-            throw new Error("Whisper returned empty transcript");
-        }
+        if (!transcript.text.trim()) throw new Error("Whisper returned empty transcript");
 
         const timedChunks = chunkTranscript(transcript);
         console.log(`[audio-worker] Chunks: ${timedChunks.length}`);

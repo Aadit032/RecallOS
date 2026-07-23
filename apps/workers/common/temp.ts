@@ -14,6 +14,7 @@ export function cleanupTemp(dirOrFile: string | null | undefined): void {
         fs.rmSync(dirOrFile, { recursive: true, force: true });
     } catch {
         // ignore cleanup failures
+        console.warn(`[temp] Failed to cleanup temp path: ${dirOrFile}`);
     }
 }
 

@@ -3,11 +3,7 @@ import path from "path";
 import { openrouterClient } from "@repo/openrouter/client";
 import { audioFormatFromExt } from "./temp.ts";
 
-const WHISPER_MODEL =
-    (process.env.WHISPER_MODEL as string) || "openai/whisper-large-v3";
-
-/** Multipart upload max is 25 MB; larger files go through base64 JSON. */
-const MULTIPART_MAX_BYTES = 25 * 1024 * 1024;
+const WHISPER_MODEL = (process.env.WHISPER_MODEL as string) || "openai/whisper-large-v3";
 
 export type TranscriptSegment = {
     start: number;
@@ -30,32 +26,15 @@ export async function transcribeAudioFile(
     filePath: string,
     opts?: { language?: string }
 ): Promise<TranscriptResult> {
-    if (!WHISPER_MODEL) {
-        throw new Error("WHISPER_MODEL is not set");
-    }
+    if (!WHISPER_MODEL) throw new Error("WHISPER_MODEL is not set");
 
-    const stat = fs.statSync(filePath);
     const ext = path.extname(filePath).replace(/^\./, "") || "mp3";
     const format = audioFormatFromExt(ext);
-    const fileName = path.basename(filePath);
 
     let result;
-    if (stat.size <= MULTIPART_MAX_BYTES) {
-        const bytes = fs.readFileSync(filePath);
-        result = await openrouterClient.stt.createTranscriptionMultipart({
-            requestBody: {
-                file: {
-                    fileName,
-                    content: bytes,
-                },
-                model: WHISPER_MODEL,
-                language: opts?.language,
-                responseFormat: "verbose_json",
-                timestampGranularities: ["segment"],
-            },
-        });
-    } else {
-        const data = fs.readFileSync(filePath).toString("base64");
+    
+    const data = fs.readFileSync(filePath).toString("base64");
+    try{
         result = await openrouterClient.stt.createTranscription({
             sttRequest: {
                 model: WHISPER_MODEL,
@@ -65,23 +44,26 @@ export async function transcribeAudioFile(
                 inputAudio: { data, format },
             },
         });
+
+        const text = (result.text ?? "").trim();
+        const segments: TranscriptSegment[] = (result.segments ?? [])
+            .map((s) => ({
+                start: s.start,
+                end: s.end,
+                text: (s.text ?? "").trim(),
+            }))
+            .filter((s) => s.text.length > 0);
+
+        return {
+            text,
+            duration: result.duration,
+            language: result.language,
+            segments,
+        };
+    } catch (err) {
+        console.error(`[transcribeAudioFile] Error transcribing ${filePath}:`, err);
+        throw err;
     }
-
-    const text = (result.text ?? "").trim();
-    const segments: TranscriptSegment[] = (result.segments ?? [])
-        .map((s) => ({
-            start: s.start,
-            end: s.end,
-            text: (s.text ?? "").trim(),
-        }))
-        .filter((s) => s.text.length > 0);
-
-    return {
-        text,
-        duration: result.duration,
-        language: result.language,
-        segments,
-    };
 }
 
 export type TimedChunk = {
@@ -99,9 +81,7 @@ export function chunkTranscript(
     maxChars = 2500,
     overlapChars = 200
 ): TimedChunk[] {
-    if (transcript.segments.length > 0) {
-        return chunkFromSegments(transcript.segments, maxChars);
-    }
+    if (transcript.segments.length > 0) return chunkFromSegments(transcript.segments, maxChars);
     return chunkPlainText(transcript.text, maxChars, overlapChars);
 }
 
@@ -142,9 +122,7 @@ function chunkFromSegments(segments: TranscriptSegment[], maxChars: number): Tim
 function chunkPlainText(text: string, maxChars: number, overlapChars: number): TimedChunk[] {
     const cleaned = text.trim();
     if (!cleaned) return [];
-    if (cleaned.length <= maxChars) {
-        return [{ text: cleaned, timestampStart: null, timestampEnd: null }];
-    }
+    if (cleaned.length <= maxChars) return [{ text: cleaned, timestampStart: null, timestampEnd: null }];
 
     const chunks: TimedChunk[] = [];
     let i = 0;
@@ -154,9 +132,7 @@ function chunkPlainText(text: string, maxChars: number, overlapChars: number): T
             // Prefer break at sentence / whitespace
             const slice = cleaned.slice(i, end);
             const breakAt = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("\n"), slice.lastIndexOf(" "));
-            if (breakAt > maxChars * 0.4) {
-                end = i + breakAt + 1;
-            }
+            if (breakAt > maxChars * 0.4) end = i + breakAt + 1;
         }
         const piece = cleaned.slice(i, end).trim();
         if (piece) chunks.push({ text: piece, timestampStart: null, timestampEnd: null });

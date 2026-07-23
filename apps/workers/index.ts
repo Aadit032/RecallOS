@@ -8,7 +8,7 @@ import { audioWorkerLoop, processAudio } from "./audio/index.ts";
 import { videoWorkerLoop, processVideo } from "./video/index.ts";
 import { sceneWorkerLoop, processScene } from "./scene/index.ts";
 import { embedderLoop, embedChunkSet } from "./embedder/index.ts";
-import { dlqLoop, processDlqMessage } from "./dlq/index.ts";
+import { dlqLoop } from "./dlq/index.ts";
 import { prismaClient } from "@repo/prisma/client";
 import { startClaimLoop } from "./common/claimStaleJobs.ts";
 dotenv.config();
@@ -36,7 +36,6 @@ const SCENE_GROUP = process.env.SCENE_GROUP as string;
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
 const EMBED_GROUP = process.env.EMBED_GROUP as string;
 const DLQ_STREAM = process.env.DLQ_STREAM as string;
-// const DLQ_GROUP = process.env.DLQ_GROUP as string;
 
 const WORKER_ID = process.env.WORKER_ID as string;
 

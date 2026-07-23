@@ -20,7 +20,7 @@ import {
 import { startClaimLoop } from "../common/claimStaleJobs.ts";
 import { createParseJob, getFinishedJob } from "../parse.ts";
 import { prismaClient } from "@repo/prisma/client";
-import chunkMarkdown, { type Chunk } from "../chunk.ts"
+import chunkMarkdown, { type Chunk } from "../common/chunk.ts"
 import { openrouterClient } from "@repo/openrouter/client"
 import { type Tier } from "../index.ts";
 
@@ -164,11 +164,16 @@ async function contextualRetrieval(full_doc: string, chunks: Chunk[]): Promise<C
 }
 
 async function documentStillExists(documentId: string): Promise<boolean> {
-    const row = await prismaClient.document.findUnique({
-        where: { id: documentId },
-        select: { id: true },
-    });
-    return Boolean(row);
+    try{
+        const row = await prismaClient.document.findUnique({
+            where: { id: documentId },
+            select: { id: true },
+        });
+        return Boolean(row);
+    }catch(e){
+        console.log("Error checking if document exists: ", e);
+        return false;
+    }
 }
 
 export async function processPdfDocument(docId: string, pricingTier: PricingTier = "basic") {
@@ -259,9 +264,7 @@ export async function processPdfDocument(docId: string, pricingTier: PricingTier
 
                         console.log(`[pdf-worker] Chunks: ${chunks.length}`);
 
-                        if (pricingTier !== "basic") {
-                            chunks = await contextualRetrieval(markdown, chunks);
-                        }
+                        if (pricingTier !== "basic") chunks = await contextualRetrieval(markdown, chunks);
 
                         if (!(await documentStillExists(docId))) {
                             console.log(`[pdf-worker] Document ${docId} deleted before saving chunks — aborting`);
