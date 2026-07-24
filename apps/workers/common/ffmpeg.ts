@@ -70,7 +70,7 @@ export async function hasAudioStream(mediaPath: string): Promise<boolean> {
 /**
  * Detect scene cut points with ffmpeg's scene score filter, then build
  * [start, end) ranges. Long scenes are split; tiny scenes are merged.
- */
+ */ 
 export async function detectScenes(
     videoPath: string,
     threshold = SCENE_THRESHOLD

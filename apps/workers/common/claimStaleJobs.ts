@@ -47,6 +47,14 @@ export async function claimStaleJobs(config: StaleClaimConfig): Promise<void> {
             await xAckOnStream(stream, group, msg.id);
         } else {
             try {
+                await prismaClient.document.update({
+                    where: { id: payload.docId },
+                    data: { status: "RETRYING" },
+                });
+            } catch (e) {
+                console.log(`[claimStaleJobs] Failed to mark docId="${payload.docId}" as RETRYING:`, e);
+            }
+            try {
                 await processFn(payload);
                 await xAckOnStream(stream, group, msg.id);
             } catch (e) {

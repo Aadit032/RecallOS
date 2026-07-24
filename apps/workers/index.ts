@@ -10,6 +10,7 @@ import { sceneWorkerLoop, processScene } from "./scene/index.ts";
 import { embedderLoop, embedChunkSet } from "./embedder/index.ts";
 import { dlqLoop } from "./dlq/index.ts";
 import { prismaClient } from "@repo/prisma/client";
+import { xAddToStream } from "@repo/redis-stream/client";
 import { startClaimLoop } from "./common/claimStaleJobs.ts";
 dotenv.config();
 
@@ -142,6 +143,7 @@ async function main() {
                         where: { id: docId },
                         data: { status: "FAILED" },
                     });
+                    await xAddToStream(DLQ_STREAM, { docId });
                 }
             },
         }, CLAIM_INTERVAL_MS),

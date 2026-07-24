@@ -53,9 +53,7 @@ export async function processVideo(docId: string) {
                 timestampEnd: String(scene.end),
             });
         }
-        console.log(
-            `[video-worker] Pushed ${scenes.length} scene(s) for docId="${docId}" to scene_stream`
-        );
+        console.log(`[video-worker] Pushed ${scenes.length} scene(s) for docId="${docId}" to scene_stream`);
 
         // Split complete — scene workers produce ParsedChunkSets asynchronously.
         await prismaClient.document.update({
@@ -70,10 +68,9 @@ export async function processVideo(docId: string) {
                 data: { status: "FAILED" },
             });
         } catch {
-            /* ignore */
+            console.error(`[video-worker] Failed to update status for docId="${docId}"`);
         }
         await xAddToStream(DLQ_STREAM, { docId });
-        // Swallow after DLQ so the stream message can be ACKed (matches pdf worker).
     } finally {
         cleanupTemp(tmpDir);
     }

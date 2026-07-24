@@ -13,7 +13,6 @@ import path from "path";
 const SCENE_STREAM = process.env.SCENE_STREAM as string;
 const SCENE_GROUP = process.env.SCENE_GROUP as string;
 const EMBED_STREAM = process.env.EMBED_STREAM as string;
-const DLQ_STREAM = process.env.DLQ_STREAM as string;
 const WORKER_ID = process.env.WORKER_ID as string;
 
 export type SceneJob = {
@@ -32,10 +31,7 @@ export async function processScene(
     timestampStart?: string,
     timestampEnd?: string
 ) {
-    console.log(
-        `[scene-worker] Processing docId="${docId}", sceneIndex="${sceneIndex}", ` +
-            `t=[${timestampStart ?? "?"}, ${timestampEnd ?? "?"}]`
-    );
+    console.log(`[scene-worker] Processing docId="${docId}", sceneIndex="${sceneIndex}", ` + `t=[${timestampStart ?? "?"}, ${timestampEnd ?? "?"}]`);
 
     const doc = await prismaClient.document.findUnique({
         where: { id: docId },
@@ -63,9 +59,7 @@ export async function processScene(
         const keyframePath = path.join(tmpDir, "keyframe.jpg");
         await extractKeyframe(localVideo, sceneStart, sceneEnd, keyframePath);
         const vision = await describeImage(fileToDataUrl(keyframePath, "image/jpeg"));
-        console.log(
-            `[scene-worker] Vision — caption=${vision.caption.length}c ocr=${vision.ocr.length}c`
-        );
+        console.log(`[scene-worker] Vision — caption=${vision.caption.length}c ocr=${vision.ocr.length}c`);
 
         let transcriptText = "";
         try {
@@ -88,11 +82,7 @@ export async function processScene(
         if (transcriptText) textParts.push(`Spoken audio:\n${transcriptText}`);
         const text = textParts.join("\n\n").trim();
 
-        if (!text) {
-            throw new Error(
-                `Empty scene content for docId=${docId} sceneIndex=${sceneIndex}`
-            );
-        }
+        if (!text) throw new Error(`Empty scene content for docId=${docId} sceneIndex=${sceneIndex}`);
 
         const chunkSet = await prismaClient.parsedChunkSet.create({
             data: {
@@ -122,11 +112,7 @@ export async function processScene(
         await xAddToStream(EMBED_STREAM, { chunkSetId: chunkSet.id });
         console.log(`[scene-worker] Pushed chunkSetId="${chunkSet.id}" to embed_stream`);
     } catch (e) {
-        console.error(
-            `[scene-worker] Failed docId="${docId}" sceneIndex="${sceneIndex}":`,
-            e
-        );
-        // Don't mark whole document FAILED on one scene — rethrow for PEL/retry.
+        console.error(`[scene-worker] Failed docId="${docId}" sceneIndex="${sceneIndex}":`, e);2
         // After max retries claim loop DLQs with docId.
         throw e;
     } finally {
