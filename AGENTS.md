@@ -45,6 +45,29 @@ import { someExport } from "@repo/qdrant/client";
 - **API base path**: `/api/v1` — JWT middleware on all routes except `/auth/*`.
 - **No tests** exist in the codebase.
 
+## Chat UI architecture
+
+`apps/web/components/chat-app/` is a **14-file modular component** (imported as `@/components/chat-app` → resolves to `index.tsx`):
+
+| File | Purpose |
+|---|---|
+| `index.tsx` | Thin orchestrator composing all modules |
+| `use-chat-state.ts` | Custom hook: all state, data fetching, SSE streaming, actions |
+| `chat-sidebar.tsx` | Expanded/collapsed sidebar + floating picker panels |
+| `chat-messages.tsx` | Message bubbles, empty state, live streaming indicator |
+| `composer.tsx` | Input bar, file upload, `/web` toggle, send button |
+| `modals.tsx` | Create/edit project, delete confirmation dialogs |
+| `types.ts` | Shared TypeScript types (Message, ChatSession, Project, etc.) |
+| `helpers.ts` | API constants, auth headers, utility functions |
+| `markdown-content.tsx` | Markdown renderer with KaTeX + GFM support |
+| `source-panel.tsx` | Source citations side panel |
+| `agent-steps.tsx` | Web agent step list + collapsible dropdown |
+| `floating-panel.tsx` | Collapsible floating panel (for collapsed sidebar) |
+| `version-pager.tsx` | 1/2, 2/2 version pager for edited messages |
+| `expandable-message.tsx` | Expandable user message (truncates at 300 chars) |
+
+**Conventions:** Types and helpers are shared via local imports. The hook returns all state + actions; presentational components are pure props-in, JSX-out. Route import unchanged: `import ChatPage from "@/components/chat-app"`.
+
 ## Required services (local dev)
 
 PostgreSQL, Redis, MinIO, Qdrant, plus API keys for LlamaCloud & OpenRouter. No docker-compose in repo — run these separately.
