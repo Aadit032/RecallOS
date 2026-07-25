@@ -604,7 +604,7 @@ export default function Dashboard() {
         {/* Section switcher */}
         <div className="relative mb-10">
           <div
-            className="flex gap-1 rounded-2xl border border-border/80 bg-card/60 p-1.5 shadow-[0_1px_0_0_color-mix(in_oklch,var(--foreground)_4%,transparent)] backdrop-blur-sm sm:inline-flex sm:w-auto"
+            className="flex items-center gap-5 sm:gap-7"
             role="tablist"
             aria-label="Dashboard section"
           >
@@ -625,42 +625,25 @@ export default function Dashboard() {
                     setActiveTab(tab.id)
                   }}
                   className={cn(
-                    "group relative flex min-w-0 flex-1 items-center gap-3 rounded-xl px-4 py-3 text-left transition-all sm:min-w-[11.5rem] sm:flex-none",
+                    "relative inline-flex items-center gap-1.5 pb-2.5 text-sm transition-colors",
                     active
-                      ? "bg-primary text-primary-foreground shadow-md"
-                      : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  <span
-                    className={cn(
-                      "flex size-9 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                      active
-                        ? "border-primary-foreground/20 bg-primary-foreground/10"
-                        : "border-border/70 bg-muted/50 group-hover:border-border"
-                    )}
-                  >
-                    <Icon className="size-4" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold tracking-tight">
-                      {tab.label}
-                    </span>
+                  <Icon className="size-3.5" />
+                  {tab.label}
+                  {active && (
                     <span
-                      className={cn(
-                        "mt-0.5 block truncate text-[11px] leading-tight",
-                        active
-                          ? "text-primary-foreground/70"
-                          : "text-muted-foreground"
-                      )}
-                    >
-                      {tab.hint}
-                    </span>
-                  </span>
+                      className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-foreground"
+                      aria-hidden
+                    />
+                  )}
                 </button>
               )
             })}
           </div>
-          <div className="mt-6 h-px w-full bg-gradient-to-r from-transparent via-border to-transparent" />
+          <div className="h-px w-full bg-border/70" />
         </div>
 
         {/* ───────── Upload section ───────── */}
