@@ -129,6 +129,14 @@ function statusVariant(
   }
 }
 
+const SEARCH_MODALITIES = [
+  { value: "", label: "Any" },
+  { value: "pdf", label: "PDF" },
+  { value: "image", label: "Image" },
+  { value: "audio", label: "Audio" },
+  { value: "video", label: "Video" },
+] as const
+
 const pipeline = [
   {
     step: "01",
@@ -174,6 +182,8 @@ export default function Dashboard() {
 
   // Semantic document search
   const [searchQuery, setSearchQuery] = useState("")
+  /** Empty string = any modality */
+  const [searchModality, setSearchModality] = useState("")
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchLoadingMore, setSearchLoadingMore] = useState(false)
@@ -352,11 +362,17 @@ export default function Dashboard() {
 
       try {
         const token = localStorage.getItem("token")
-        const { data } = await axios.post(
-          `${API_BASE_SEARCH}/`,
-          { query: q, limit: 10, offset },
-          { headers: { Authorization: "Bearer " + token } }
-        )
+        const body: {
+          query: string
+          limit: number
+          offset: number
+          modality?: string
+        } = { query: q, limit: 10, offset }
+        if (searchModality) body.modality = searchModality
+
+        const { data } = await axios.post(`${API_BASE_SEARCH}/`, body, {
+          headers: { Authorization: "Bearer " + token },
+        })
         const docs: SearchResult[] = data.documents ?? []
         if (append) setSearchResults((prev) => [...prev, ...docs])
         else setSearchResults(docs)
@@ -385,7 +401,7 @@ export default function Dashboard() {
         else setSearchLoading(false)
       }
     },
-    [searchQuery]
+    [searchQuery, searchModality]
   )
 
   const loadMoreSearch = useCallback(() => {
@@ -744,40 +760,73 @@ export default function Dashboard() {
           </div>
 
           <form
-            className="flex flex-col gap-3 sm:flex-row sm:items-center"
+            className="flex flex-col gap-3"
             onSubmit={(e) => {
               e.preventDefault()
               void runSearch(0, false)
             }}
           >
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="give me the pics from my trip to paris"
-                className="h-12 border-input bg-muted/40 pl-10 text-base"
-                disabled={searchLoading}
-              />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="give me the pics from my trip to paris"
+                  className="h-12 border-input bg-muted/40 pl-10 text-base"
+                  disabled={searchLoading}
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={!searchQuery.trim() || searchLoading}
+                className="h-12 shrink-0 px-6 text-base font-semibold"
+              >
+                {searchLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Searching…
+                  </>
+                ) : (
+                  <>
+                    <Search className="size-4" />
+                    Search
+                  </>
+                )}
+              </Button>
             </div>
-            <Button
-              type="submit"
-              disabled={!searchQuery.trim() || searchLoading}
-              className="h-12 shrink-0 px-6 text-base font-semibold"
-            >
-              {searchLoading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Searching…
-                </>
-              ) : (
-                <>
-                  <Search className="size-4" />
-                  Search
-                </>
-              )}
-            </Button>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Type</span>
+              <div
+                className="flex flex-wrap gap-1.5"
+                role="group"
+                aria-label="Filter by document type"
+              >
+                {SEARCH_MODALITIES.map((m) => {
+                  const active = searchModality === m.value
+                  return (
+                    <button
+                      key={m.value || "any"}
+                      type="button"
+                      disabled={searchLoading}
+                      onClick={() => setSearchModality(m.value)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-sm transition-colors",
+                        active
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border/80 bg-muted/40 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
+                        searchLoading && "opacity-60"
+                      )}
+                      aria-pressed={active}
+                    >
+                      {m.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           </form>
 
           {searchLoading && (

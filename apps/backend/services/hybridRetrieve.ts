@@ -6,6 +6,10 @@ import { startActiveObservation, truncateForTrace } from "@repo/langfuse/client"
 const COLLECTION = process.env.COLLECTION as string;
 const DEFAULT_RETRIEVAL_LIMIT = 50;
 
+/** Max additive boost applied when query lexically matches document tags (RRF scores are ~0–1). */
+const TAG_MATCH_BOOST_PER_TAG = 0.04;
+const TAG_MATCH_BOOST_CAP = 0.12;
+
 export type RetrievedChunk = {
     id: string;
     text: string;
@@ -21,6 +25,55 @@ export type HybridRetrieveOptions = {
     limit?: number;
     modality?: string;
 };
+
+/**
+ * Lexical tag ↔ query overlap. Tags only lived in the chunk text header before,
+ * so exact tag names barely moved RRF rank; this boosts scores when the user
+ * literally names a tag (or its tokens) in the query.
+ */
+function tagMatchBoost(query: string, tags: string[] | null | undefined): number {
+    if (!tags?.length) return 0;
+
+    const q = query.toLowerCase().trim();
+    if (!q) return 0;
+
+    const queryTokens = new Set(q
+        .split(/[^a-z0-9]+/i)
+        .map((t) => t.toLowerCase())
+        .filter((t) => t.length >= 2)
+    );
+
+    let boost = 0;
+    for (const raw of tags) {
+        const tag = raw.trim().toLowerCase();
+        if (!tag) continue;
+
+        // Full tag phrase appears in the query (e.g. tag "paris trip" in "my paris trip photos")
+        if (q.includes(tag)) {
+            boost += TAG_MATCH_BOOST_PER_TAG;
+            continue;
+        }
+
+        const tagTokens = tag
+            .split(/[^a-z0-9]+/i)
+            .map((t) => t.toLowerCase())
+            .filter((t) => t.length >= 2);
+        if (tagTokens.length === 0) continue;
+
+        // All multi-word tag tokens appear as query tokens
+        if (tagTokens.every((tt) => queryTokens.has(tt))) {
+            boost += TAG_MATCH_BOOST_PER_TAG * 0.75;
+            continue;
+        }
+
+        // Single-token tag equals a query token
+        if (tagTokens.length === 1 && queryTokens.has(tagTokens[0]!)) {
+            boost += TAG_MATCH_BOOST_PER_TAG;
+        }
+    }
+
+    return Math.min(boost, TAG_MATCH_BOOST_CAP);
+}
 
 /**
  * Hybrid retrieval: dense (cosine) + sparse (SPLADE), fused with RRF in Qdrant.
@@ -70,9 +123,7 @@ export async function hybridRetrieve(
                 getDenseVectors([query]),
                 getSparseVectors([query]),
             ]);
-            console.log(
-                `[hybridRetrieve] Dense vector dims: ${denseVectors[0]?.length ?? 0}, Sparse vector nnz: ${sparseVectors[0]?.indices?.length ?? 0}`
-            );
+            console.log(`[hybridRetrieve] Dense vector dims: ${denseVectors[0]?.length ?? 0}, Sparse vector nnz: ${sparseVectors[0]?.indices?.length ?? 0}`);
 
             const denseVector = denseVectors[0];
             const sparse = sparseVectors[0];
@@ -104,9 +155,7 @@ export async function hybridRetrieve(
                 throw new Error("Sparse vector is empty");
             }
 
-            console.log(
-                `[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${limit}, userId=${userId}, documents=${ownedDocumentIds.length}`
-            );
+            console.log(`[hybridRetrieve] Querying Qdrant collection "${COLLECTION}" with dense (${denseQuery.length}d) + sparse (${sparseQuery.indices.length} nnz) RRF, limit=${limit}, userId=${userId}, documents=${ownedDocumentIds.length}`);
             let res;
             try {
                 res = await qdrantClient.query(COLLECTION, {
@@ -166,21 +215,26 @@ export async function hybridRetrieve(
 
             const ownedDocumentIdSet = new Set(ownedDocumentIds);
 
+            let boostedCount = 0;
             const chunks = rawChunks
                 .filter((c) => {
                     const docId = c.documentId == null ? null : String(c.documentId);
                     if (!docId || !ownedDocumentIdSet.has(docId)) return false;
                     return c.payloadUserId == null || c.payloadUserId === userId;
                 })
-                .map(({ payloadUserId: _payloadUserId, ...chunk }) => chunk);
+                .map(({ payloadUserId: _payloadUserId, ...chunk }) => {
+                    const boost = tagMatchBoost(query, chunk.tags);
+                    if (boost > 0) boostedCount += 1;
+                    return { ...chunk, score: chunk.score + boost };
+                })
+                .sort((a, b) => b.score - a.score);
 
-            console.log(
-                `[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} user-scoped chunks with text`
-            );
+            console.log(`[hybridRetrieve] Qdrant returned ${res.points?.length ?? 0} RRF points, ${chunks.length} user-scoped chunks with text, tagBoosted=${boostedCount}`);
 
             retriever.update({
                 output: {
                     chunkCount: chunks.length,
+                    tagBoosted: boostedCount,
                     topScores: chunks.slice(0, 5).map((c) => ({
                         id: c.id,
                         score: c.score,
