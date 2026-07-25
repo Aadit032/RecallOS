@@ -10,6 +10,7 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
+  Search,
   Trash2,
   Upload,
   X,
@@ -32,16 +33,40 @@ import { cn } from "@/lib/utils"
 
 const API_BASE_UPLOAD = "http://localhost:3000/api/v1/upload"
 const API_BASE_DOWNLOAD = "http://localhost:3000/api/v1/download"
+const API_BASE_SEARCH = "http://localhost:3000/api/v1/search"
 
-type DocStatus = "UPLOADED" | "QUEUED" | "PARSING" | "PARSED" | "EMBEDDING" | "INDEXED" | "READY" | "FAILED"
+type DocStatus =
+  | "UPLOADED"
+  | "QUEUED"
+  | "PARSING"
+  | "PARSED"
+  | "EMBEDDING"
+  | "INDEXED"
+  | "READY"
+  | "FAILED"
 
 type DocumentItem = {
   id: string
   title: string
   status: DocStatus
   ObjectKey: string
+  modality?: string
+  tags?: string[]
   createdAt: string
   updatedAt: string
+}
+
+type SearchResult = {
+  id: string
+  title: string
+  ObjectKey: string
+  modality: string
+  mimeType: string
+  tags: string[]
+  status: string
+  createdAt: string
+  score: number
+  snippet: string | null
 }
 
 function formatBytes(bytes: number) {
@@ -62,15 +87,24 @@ function formatDate(iso: string) {
 
 function statusLabel(status: DocStatus): string {
   switch (status) {
-    case "UPLOADED": return "Uploaded"
-    case "QUEUED": return "Queued"
-    case "PARSING": return "Parsing"
-    case "PARSED": return "Parsed"
-    case "EMBEDDING": return "Embedding"
-    case "INDEXED": return "Indexed"
-    case "READY": return "Ready"
-    case "FAILED": return "Failed"
-    default: return status
+    case "UPLOADED":
+      return "Uploaded"
+    case "QUEUED":
+      return "Queued"
+    case "PARSING":
+      return "Parsing"
+    case "PARSED":
+      return "Parsed"
+    case "EMBEDDING":
+      return "Embedding"
+    case "INDEXED":
+      return "Indexed"
+    case "READY":
+      return "Ready"
+    case "FAILED":
+      return "Failed"
+    default:
+      return status
   }
 }
 
@@ -128,6 +162,8 @@ export default function Dashboard() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [status, setStatus] = useState("")
+  const [uploadTags, setUploadTags] = useState<string[]>([])
+  const [tagDraft, setTagDraft] = useState("")
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState("")
@@ -136,9 +172,22 @@ export default function Dashboard() {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
 
+  // Semantic document search
+  const [searchQuery, setSearchQuery] = useState("")
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false)
+  const [searchError, setSearchError] = useState("")
+  const [searchHasMore, setSearchHasMore] = useState(false)
+  const [searchNextOffset, setSearchNextOffset] = useState<number | null>(null)
+  const [searchTotal, setSearchTotal] = useState(0)
+  const [hasSearched, setHasSearched] = useState(false)
+
   const fetchDocuments = useCallback(async (cursor?: string) => {
-    const isInitial = cursor === undefined;
-    console.log(`[dashboard:fetchDocuments] ${isInitial ? "Initial load" : "Load more"}, cursor="${cursor ?? "none"}"`);
+    const isInitial = cursor === undefined
+    console.log(
+      `[dashboard:fetchDocuments] ${isInitial ? "Initial load" : "Load more"}, cursor="${cursor ?? "none"}"`
+    )
     if (isInitial) setDocsLoading(true)
     else setLoadingMore(true)
     setDocsError("")
@@ -150,9 +199,11 @@ export default function Dashboard() {
         params,
         headers: { Authorization: "Bearer " + token },
       })
-      console.log(`[dashboard:fetchDocuments] Received ${data.documents?.length ?? 0} documents, nextCursor=${data.nextCursor}`);
+      console.log(
+        `[dashboard:fetchDocuments] Received ${data.documents?.length ?? 0} documents, nextCursor=${data.nextCursor}`
+      )
       if (isInitial) setDocuments(data.documents ?? [])
-      else setDocuments(prev => [...prev, ...(data.documents ?? [])])
+      else setDocuments((prev) => [...prev, ...(data.documents ?? [])])
       setNextCursor(data.nextCursor ?? null)
     } catch (e) {
       console.error(`[dashboard:fetchDocuments] Error:`, e)
@@ -178,17 +229,46 @@ export default function Dashboard() {
     return () => URL.revokeObjectURL(url)
   }, [file])
 
+  const addTag = (raw: string) => {
+    const parts = raw
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean)
+    if (parts.length === 0) return
+    setUploadTags((prev) => {
+      const seen = new Set(prev.map((t) => t.toLowerCase()))
+      const next = [...prev]
+      for (const p of parts) {
+        const key = p.toLowerCase()
+        if (seen.has(key) || next.length >= 20) continue
+        if (p.length > 40) continue
+        seen.add(key)
+        next.push(p)
+      }
+      return next
+    })
+    setTagDraft("")
+  }
+
+  const removeTag = (tag: string) => {
+    setUploadTags((prev) => prev.filter((t) => t !== tag))
+  }
+
   const clearFile = () => {
     setFile(null)
     setStatus("")
+    setUploadTags([])
+    setTagDraft("")
   }
 
   const handleUpload = async () => {
     if (!file) {
-      console.log(`[dashboard:handleUpload] No file selected`);
-      return;
+      console.log(`[dashboard:handleUpload] No file selected`)
+      return
     }
-    console.log(`[dashboard:handleUpload] Starting upload: name="${file.name}", size=${file.size}, type="${file.type}"`);
+    console.log(
+      `[dashboard:handleUpload] Starting upload: name="${file.name}", size=${file.size}, type="${file.type}", tags=${JSON.stringify(uploadTags)}`
+    )
     setUploading(true)
 
     try {
@@ -206,18 +286,20 @@ export default function Dashboard() {
           },
         }
       )
-      console.log(`[dashboard:handleUpload] Got presigned URL and key="${key}"`);
+      console.log(`[dashboard:handleUpload] Got presigned URL and key="${key}"`)
 
       setStatus("Uploading file…")
-      console.log(`[dashboard:handleUpload] PUT to MinIO presigned URL`);
+      console.log(`[dashboard:handleUpload] PUT to MinIO presigned URL`)
       const res = await axios.put(presignedUrl, file, {
         headers: { "Content-Type": file.type },
       })
-      console.log(`[dashboard:handleUpload] PUT response status=${res.status}`);
+      console.log(`[dashboard:handleUpload] PUT response status=${res.status}`)
 
       if (res.status == 200) {
         setStatus("Confirming upload…")
-        console.log(`[dashboard:handleUpload] POST /confirm — fileName="${file.name}", key="${key}", size=${file.size}`);
+        console.log(
+          `[dashboard:handleUpload] POST /confirm — fileName="${file.name}", key="${key}", size=${file.size}`
+        )
         const { data } = await axios.post(
           `${API_BASE_UPLOAD}/confirm`,
           {
@@ -225,6 +307,7 @@ export default function Dashboard() {
             key,
             size: file.size,
             contentType: file.type,
+            tags: uploadTags,
           },
           {
             headers: {
@@ -232,12 +315,18 @@ export default function Dashboard() {
             },
           }
         )
-        console.log(`[dashboard:handleUpload] Upload confirmed: documentId=${data.documentId}`);
+        console.log(
+          `[dashboard:handleUpload] Upload confirmed: documentId=${data.documentId}`
+        )
         setFile(null)
+        setUploadTags([])
+        setTagDraft("")
         setStatus("Upload complete.")
         void fetchDocuments()
       } else {
-        console.warn(`[dashboard:handleUpload] Unexpected PUT status: ${res.status}`);
+        console.warn(
+          `[dashboard:handleUpload] Unexpected PUT status: ${res.status}`
+        )
         setStatus("Upload failed — unexpected response.")
       }
     } catch (e) {
@@ -245,16 +334,83 @@ export default function Dashboard() {
       setStatus("Upload failed.")
     } finally {
       setUploading(false)
-      console.log(`[dashboard:handleUpload] Done`);
+      console.log(`[dashboard:handleUpload] Done`)
     }
   }
+
+  const runSearch = useCallback(
+    async (offset = 0, append = false) => {
+      const q = searchQuery.trim()
+      if (!q) return
+
+      if (append) setSearchLoadingMore(true)
+      else {
+        setSearchLoading(true)
+        setSearchError("")
+        setHasSearched(true)
+      }
+
+      try {
+        const token = localStorage.getItem("token")
+        const { data } = await axios.post(
+          `${API_BASE_SEARCH}/`,
+          { query: q, limit: 10, offset },
+          { headers: { Authorization: "Bearer " + token } }
+        )
+        const docs: SearchResult[] = data.documents ?? []
+        if (append) setSearchResults((prev) => [...prev, ...docs])
+        else setSearchResults(docs)
+        setSearchHasMore(Boolean(data.hasMore))
+        setSearchNextOffset(
+          typeof data.nextOffset === "number" ? data.nextOffset : null
+        )
+        setSearchTotal(
+          typeof data.totalMatched === "number" ? data.totalMatched : docs.length
+        )
+      } catch (e) {
+        console.error(`[dashboard:search] Error:`, e)
+        if (!append) {
+          setSearchResults([])
+          setSearchHasMore(false)
+          setSearchNextOffset(null)
+          setSearchTotal(0)
+        }
+        setSearchError(
+          axios.isAxiosError(e)
+            ? (e.response?.data?.message as string) || e.message
+            : "Search failed"
+        )
+      } finally {
+        if (append) setSearchLoadingMore(false)
+        else setSearchLoading(false)
+      }
+    },
+    [searchQuery]
+  )
+
+  const loadMoreSearch = useCallback(() => {
+    if (
+      searchNextOffset != null &&
+      searchHasMore &&
+      !searchLoadingMore &&
+      !searchLoading
+    ) {
+      void runSearch(searchNextOffset, true)
+    }
+  }, [
+    searchNextOffset,
+    searchHasMore,
+    searchLoadingMore,
+    searchLoading,
+    runSearch,
+  ])
 
   const loadMore = useCallback(() => {
     if (nextCursor && !loadingMore) void fetchDocuments(nextCursor)
   }, [nextCursor, loadingMore, fetchDocuments])
 
   const handleDownload = async (key: string) => {
-    console.log(`[dashboard:handleDownload] Getting download URL for key="${key}"`);
+    console.log(`[dashboard:handleDownload] Getting download URL for key="${key}"`)
     const token = localStorage.getItem("token")
     const { data } = await axios.post(
       `${API_BASE_DOWNLOAD}/get-download-url`,
@@ -272,7 +428,7 @@ export default function Dashboard() {
     if (!deleteTarget || deletingId) return
 
     const doc = deleteTarget
-    console.log(`[dashboard:handleDeleteDocument] Deleting documentId=${doc.id}`);
+    console.log(`[dashboard:handleDeleteDocument] Deleting documentId=${doc.id}`)
     setDeletingId(doc.id)
     try {
       const token = localStorage.getItem("token")
@@ -280,7 +436,8 @@ export default function Dashboard() {
         headers: { Authorization: "Bearer " + token },
       })
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
-      console.log(`[dashboard:handleDeleteDocument] Deleted documentId=${doc.id}`);
+      setSearchResults((prev) => prev.filter((d) => d.id !== doc.id))
+      console.log(`[dashboard:handleDeleteDocument] Deleted documentId=${doc.id}`)
     } catch (e) {
       console.error(`[dashboard:handleDeleteDocument] Error:`, e)
       setDocsError(
@@ -315,9 +472,6 @@ export default function Dashboard() {
             <Button variant="ghost" size="sm" asChild>
               <Link href="/chat">Chat</Link>
             </Button>
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/">Home</Link>
-            </Button>
           </nav>
         </div>
       </header>
@@ -339,7 +493,11 @@ export default function Dashboard() {
               . Files are stored, parsed, and queued for indexing.
             </p>
           </div>
-          <Button variant="outline" className="shrink-0 border-border/90 bg-card/60" asChild>
+          <Button
+            variant="outline"
+            className="shrink-0 border-border/90 bg-card/60"
+            asChild
+          >
             <Link href="/chat">
               <MessageSquare className="size-4" />
               Open chat
@@ -355,7 +513,8 @@ export default function Dashboard() {
               </h2>
               <p className="text-base text-muted-foreground">
                 PDFs work best right now. Upload uses a presigned URL — bytes go
-                straight to storage.
+                straight to storage. Add tags so retrieval can find files by
+                trip, project, or topic.
               </p>
             </div>
 
@@ -374,6 +533,62 @@ export default function Dashboard() {
                   setFile(selected ?? null)
                 }}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="tags" className="text-sm font-semibold">
+                Tags{" "}
+                <span className="font-normal text-muted-foreground">
+                  (optional)
+                </span>
+              </Label>
+              <div className="flex flex-wrap gap-2">
+                {uploadTags.map((tag) => (
+                  <Badge
+                    key={tag}
+                    variant="secondary"
+                    className="gap-1 pr-1 font-normal"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      className="rounded-sm p-0.5 hover:bg-muted"
+                      onClick={() => removeTag(tag)}
+                      aria-label={`Remove tag ${tag}`}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+              <Input
+                id="tags"
+                type="text"
+                value={tagDraft}
+                placeholder="e.g. paris, trip, resume — Enter or comma to add"
+                className="h-11 border-input bg-muted/40"
+                disabled={uploadTags.length >= 20}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault()
+                    addTag(tagDraft)
+                  } else if (
+                    e.key === "Backspace" &&
+                    !tagDraft &&
+                    uploadTags.length > 0
+                  ) {
+                    removeTag(uploadTags[uploadTags.length - 1]!)
+                  }
+                }}
+                onBlur={() => {
+                  if (tagDraft.trim()) addTag(tagDraft)
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Up to 20 tags. They are stored on the document and embedded with
+                every chunk for better search.
+              </p>
             </div>
 
             {file && previewUrl && (
@@ -422,8 +637,12 @@ export default function Dashboard() {
                     className="max-h-[28rem] w-full rounded-md bg-muted/10"
                   />
                 ) : isAudio ? (
-                  <div className="flex h-20 items-center justify-center bg-muted/10 rounded-md">
-                    <audio src={previewUrl} controls className="w-full max-w-md px-4" />
+                  <div className="flex h-20 items-center justify-center rounded-md bg-muted/10">
+                    <audio
+                      src={previewUrl}
+                      controls
+                      className="w-full max-w-md px-4"
+                    />
                   </div>
                 ) : (
                   <div className="flex h-40 flex-col items-center justify-center gap-2 text-center">
@@ -484,7 +703,10 @@ export default function Dashboard() {
             </p>
             <ol className="mt-8 space-y-0">
               {pipeline.map((item, index) => (
-                <li key={item.step} className="relative flex gap-4 pb-6 last:pb-0">
+                <li
+                  key={item.step}
+                  className="relative flex gap-4 pb-6 last:pb-0"
+                >
                   {index < pipeline.length - 1 && (
                     <span
                       className="absolute top-6 bottom-0 left-[0.55rem] w-px bg-border"
@@ -507,6 +729,167 @@ export default function Dashboard() {
             </ol>
           </aside>
         </div>
+
+        {/* Semantic document search */}
+        <section className="mt-20 space-y-6 border-t border-border/80 pt-12">
+          <div>
+            <h2 className="font-display text-3xl font-medium tracking-tight">
+              Search your documents
+            </h2>
+            <p className="mt-1 text-base text-muted-foreground">
+              Ask in plain language — e.g. &ldquo;pics from my trip to
+              paris&rdquo;. Returns the most related documents from your
+              library.
+            </p>
+          </div>
+
+          <form
+            className="flex flex-col gap-3 sm:flex-row sm:items-center"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void runSearch(0, false)
+            }}
+          >
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="give me the pics from my trip to paris"
+                className="h-12 border-input bg-muted/40 pl-10 text-base"
+                disabled={searchLoading}
+              />
+            </div>
+            <Button
+              type="submit"
+              disabled={!searchQuery.trim() || searchLoading}
+              className="h-12 shrink-0 px-6 text-base font-semibold"
+            >
+              {searchLoading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Searching…
+                </>
+              ) : (
+                <>
+                  <Search className="size-4" />
+                  Search
+                </>
+              )}
+            </Button>
+          </form>
+
+          {searchLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Running hybrid retrieval…
+            </div>
+          )}
+
+          {!searchLoading && searchError && (
+            <p className="text-sm font-medium text-destructive">{searchError}</p>
+          )}
+
+          {!searchLoading &&
+            hasSearched &&
+            !searchError &&
+            searchResults.length === 0 && (
+              <div className="rounded-xl border border-dashed border-border/90 bg-card/40 px-6 py-12 text-center">
+                <p className="font-display text-xl text-foreground">
+                  No matching documents
+                </p>
+                <p className="mt-2 text-base text-muted-foreground">
+                  Try different wording, or wait until uploads show Ready.
+                </p>
+              </div>
+            )}
+
+          {!searchLoading && searchResults.length > 0 && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Showing {searchResults.length}
+                {searchTotal > 0 ? ` of ${searchTotal}` : ""} related document
+                {searchTotal === 1 ? "" : "s"}
+              </p>
+              <ul className="overflow-hidden rounded-xl border border-border/80 bg-card/50">
+                {searchResults.map((doc, idx) => (
+                  <li
+                    key={`${doc.id}-${idx}`}
+                    className={cn(
+                      "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5",
+                      idx < searchResults.length - 1 &&
+                        "border-b border-border/60"
+                    )}
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
+                        <FileText className="size-4" />
+                      </span>
+                      <div className="min-w-0 space-y-1.5">
+                        <p className="truncate font-medium tracking-tight">
+                          {doc.title}
+                        </p>
+                        {doc.snippet && (
+                          <p className="line-clamp-2 text-sm text-muted-foreground">
+                            {doc.snippet}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.modality && (
+                            <Badge variant="outline" className="font-mono text-[10px]">
+                              {doc.modality}
+                            </Badge>
+                          )}
+                          {(doc.tags ?? []).map((tag) => (
+                            <Badge
+                              key={tag}
+                              variant="secondary"
+                              className="font-normal"
+                            >
+                              {tag}
+                            </Badge>
+                          ))}
+                          <span className="font-mono text-xs text-muted-foreground">
+                            score {doc.score.toFixed(3)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2 sm:pl-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleDownload(doc.ObjectKey)}
+                      >
+                        <Download className="size-3.5" />
+                        Download
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {searchHasMore && (
+                <div className="flex justify-center pt-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={loadMoreSearch}
+                    disabled={searchLoadingMore}
+                    className="gap-1.5 text-muted-foreground hover:text-foreground"
+                  >
+                    {searchLoadingMore ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <ChevronDown className="size-3.5" />
+                    )}
+                    Load more
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
 
         {/* Documents library */}
         <section className="mt-20 space-y-6 border-t border-border/80 pt-12">
@@ -557,83 +940,104 @@ export default function Dashboard() {
 
           {!docsLoading && documents.length > 0 && (
             <>
-            <ul className="overflow-hidden rounded-xl border border-border/80 bg-card/50">
-              {documents.map((doc, idx) => (
-                <li
-                  key={doc.id}
-                  className={cn(
-                    "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5",
-                    idx < documents.length - 1 && "border-b border-border/60",
-                    doc.status === "READY" && "bg-emerald-500/10 backdrop-blur-sm border-l-2 border-l-emerald-500/30",
-                    (doc.status === "PARSING" || doc.status === "EMBEDDING") && "bg-muted/40 border-l-2 border-l-muted-foreground/20",
-                    doc.status === "FAILED" && "bg-red-500/10 border-l-2 border-l-red-500/30",
-                    (doc.status === "UPLOADED" || doc.status === "QUEUED" || doc.status === "PARSED" || doc.status === "INDEXED") && "bg-transparent border-2 border-dashed border-muted-foreground/30 my-1 rounded-lg",
-                  )}
-                >
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
-                      <FileText className="size-4" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="truncate font-medium tracking-tight">
-                        {doc.title}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {formatDate(doc.createdAt)}
-                      </p>
-                      <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                        {doc.id}
-                      </p>
+              <ul className="overflow-hidden rounded-xl border border-border/80 bg-card/50">
+                {documents.map((doc, idx) => (
+                  <li
+                    key={doc.id}
+                    className={cn(
+                      "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5",
+                      idx < documents.length - 1 && "border-b border-border/60",
+                      doc.status === "READY" &&
+                        "border-l-2 border-l-emerald-500/30 bg-emerald-500/10 backdrop-blur-sm",
+                      (doc.status === "PARSING" ||
+                        doc.status === "EMBEDDING") &&
+                        "border-l-2 border-l-muted-foreground/20 bg-muted/40",
+                      doc.status === "FAILED" &&
+                        "border-l-2 border-l-red-500/30 bg-red-500/10",
+                      (doc.status === "UPLOADED" ||
+                        doc.status === "QUEUED" ||
+                        doc.status === "PARSED" ||
+                        doc.status === "INDEXED") &&
+                        "my-1 rounded-lg border-2 border-dashed border-muted-foreground/30 bg-transparent"
+                    )}
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
+                        <FileText className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium tracking-tight">
+                          {doc.title}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {formatDate(doc.createdAt)}
+                        </p>
+                        {(doc.tags?.length ?? 0) > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {doc.tags!.map((tag) => (
+                              <Badge
+                                key={tag}
+                                variant="secondary"
+                                className="font-normal"
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                          {doc.id}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2 sm:pl-4">
-                    <Badge variant={statusVariant(doc.status)}>
-                      {statusLabel(doc.status)}
-                    </Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleDownload(doc.ObjectKey)}
-                    >
-                      <Download className="size-3.5" />
-                      Download
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      disabled={deletingId === doc.id}
-                      onClick={() => setDeleteTarget(doc)}
-                    >
-                      {deletingId === doc.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-3.5" />
-                      )}
-                      Delete
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-            {nextCursor && (
-              <div className="flex justify-center pt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={loadMore}
-                  disabled={loadingMore}
-                  className="gap-1.5 text-muted-foreground hover:text-foreground"
-                >
-                  {loadingMore ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <ChevronDown className="size-3.5" />
-                  )}
-                  Load more
-                </Button>
-              </div>
-            )}
+                    <div className="flex shrink-0 items-center gap-2 sm:pl-4">
+                      <Badge variant={statusVariant(doc.status)}>
+                        {statusLabel(doc.status)}
+                      </Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleDownload(doc.ObjectKey)}
+                      >
+                        <Download className="size-3.5" />
+                        Download
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={deletingId === doc.id}
+                        onClick={() => setDeleteTarget(doc)}
+                      >
+                        {deletingId === doc.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                        Delete
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {nextCursor && (
+                <div className="flex justify-center pt-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="gap-1.5 text-muted-foreground hover:text-foreground"
+                  >
+                    {loadingMore ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <ChevronDown className="size-3.5" />
+                    )}
+                    Load more
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </section>

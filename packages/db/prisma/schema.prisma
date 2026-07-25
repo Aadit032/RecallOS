@@ -58,6 +58,7 @@ model Document {
   ObjectKey       String         @unique
   status          DocumentStatus @default(UPLOADED)
   streamMessageId String?
+  tags            String[]       @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

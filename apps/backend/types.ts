@@ -40,3 +40,10 @@ export const ReasoningSchema = z.object({
     nextSearchQuery: z.string().default(""),
     reasoning: z.string(),
 });
+
+export const searchSchema = z.object({
+    query: z.string().trim().min(1).max(2000),
+    limit: z.number().int().min(1).max(50).optional(),
+    offset: z.number().int().min(0).optional(),
+    modality: z.string().trim().min(1).max(32).optional(),
+});

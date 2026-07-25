@@ -13,6 +13,7 @@ import projectRouter from "./routers/projectRouter.ts";
 import express from "express";
 import middleware from "./middleware.ts";
 import downloadRouter from "./routers/downloadRouter.ts";
+import searchRouter from "./routers/searchRouter.ts";
 
 const PORT = process.env.PORT;
 
@@ -29,6 +30,9 @@ console.log(`[server] Registered: /api/v1/upload (with middleware)`);
 
 app.use("/api/v1/download", middleware, downloadRouter);
 console.log(`[server] Registered: /api/v1/download (with middleware)`);
+
+app.use("/api/v1/search", middleware, searchRouter);
+console.log(`[server] Registered: /api/v1/search (with middleware)`);
 
 app.use("/api/v1/chat", middleware, chatRouter);
 console.log(`[server] Registered: /api/v1/chat (with middleware)`);

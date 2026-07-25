@@ -20,6 +20,7 @@ import { startClaimLoop } from "../common/claimStaleJobs.ts";
 import { createParseJob, getFinishedJob } from "../common/parse.ts";
 import { prismaClient } from "@repo/prisma/client";
 import chunkMarkdown, { type Chunk } from "../common/chunk.ts"
+import { withChunkHeader, chunkMetadataPayload } from "../common/chunkMeta.ts"
 import { openrouterClient } from "@repo/openrouter/client"
 import { type Tier } from "../index.ts";
 
@@ -190,7 +191,7 @@ export async function processPdfDocument(docId: string, pricingTier: PricingTier
                     try {
                         const existing = await prismaClient.document.findUnique({
                             where: { id: docId },
-                            select: { id: true, ObjectKey: true, userId: true, mimeType: true },
+                            select: { id: true, ObjectKey: true, userId: true, mimeType: true, title: true, tags: true, modality: true },
                         });
                         if (!existing) {
                             console.log(`[pdf-worker] Document ${docId} no longer exists — skipping`);
@@ -201,7 +202,7 @@ export async function processPdfDocument(docId: string, pricingTier: PricingTier
                         const document = await prismaClient.document.update({
                             where: { id: docId },
                             data: { status: "PARSING" },
-                            select: { ObjectKey: true, userId: true }
+                            select: { ObjectKey: true, userId: true, title: true, tags: true, modality: true }
                         });
                         console.log(`[pdf-worker] Document ${docId} status → PARSING`);
 
@@ -265,6 +266,16 @@ export async function processPdfDocument(docId: string, pricingTier: PricingTier
 
                         if (pricingTier !== "basic") chunks = await contextualRetrieval(markdown, chunks);
 
+                        const docMeta = {
+                            title: document.title,
+                            modality: document.modality || "pdf",
+                            tags: document.tags,
+                        };
+                        chunks = chunks.map((chunk) => ({
+                            ...chunk,
+                            text: withChunkHeader(chunk.text, docMeta),
+                        }));
+
                         if (!(await documentStillExists(docId))) {
                             console.log(`[pdf-worker] Document ${docId} deleted before saving chunks — aborting`);
                             root.update({ output: { skipped: true, reason: "deleted-before-save" } });
@@ -280,7 +291,7 @@ export async function processPdfDocument(docId: string, pricingTier: PricingTier
                                 chunks: {
                                     create: chunks.map(chunk => ({
                                         text: chunk.text,
-                                        metadata: { chunkIndex: chunk.id },
+                                        metadata: chunkMetadataPayload(docMeta, { chunkIndex: chunk.id }),
                                     })),
                                 },
                             },

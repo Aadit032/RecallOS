@@ -80,6 +80,8 @@ downloadRouter.get("/list", async (req, res) => {
                 title: true,
                 status: true,
                 ObjectKey: true,
+                modality: true,
+                tags: true,
                 createdAt: true,
                 updatedAt: true,
             },

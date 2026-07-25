@@ -8,6 +8,7 @@ import { extractAudioClip, extractKeyframe } from "../common/ffmpeg.ts";
 import { cleanupTemp, extFromKey, fileToDataUrl, makeTempDir } from "../common/temp.ts";
 import { transcribeAudioFile } from "../common/transcribe.ts";
 import { describeImage } from "../common/vision.ts";
+import { withChunkHeader, chunkMetadataPayload } from "../common/chunkMeta.ts";
 import path from "path";
 
 const SCENE_STREAM = process.env.SCENE_STREAM as string;
@@ -35,7 +36,7 @@ export async function processScene(
 
     const doc = await prismaClient.document.findUnique({
         where: { id: docId },
-        select: { ObjectKey: true, id: true },
+        select: { ObjectKey: true, id: true, title: true, tags: true, modality: true },
     });
     if (!doc) {
         console.log(`[scene-worker] Document ${docId} not found — skipping`);
@@ -84,6 +85,16 @@ export async function processScene(
 
         if (!text) throw new Error(`Empty scene content for docId=${docId} sceneIndex=${sceneIndex}`);
 
+        const docMeta = {
+            title: doc.title,
+            modality: doc.modality || "video",
+            tags: doc.tags,
+            extraLines: [
+                `Scene: ${sceneIndex}`,
+                ...(hasRange ? [`Time: ${sceneStart}s–${sceneEnd}s`] : []),
+            ],
+        };
+
         const chunkSet = await prismaClient.parsedChunkSet.create({
             data: {
                 documentId: docId,
@@ -92,8 +103,8 @@ export async function processScene(
                 chunks: {
                     create: [
                         {
-                            text,
-                            metadata: {
+                            text: withChunkHeader(text, docMeta),
+                            metadata: chunkMetadataPayload(docMeta, {
                                 sceneIndex: Number.isFinite(Number(sceneIndex))
                                     ? Number(sceneIndex)
                                     : sceneIndex,
@@ -102,7 +113,7 @@ export async function processScene(
                                 caption: vision.caption || null,
                                 ocr: vision.ocr || null,
                                 transcript: transcriptText || null,
-                            },
+                            }),
                         },
                     ],
                 },
@@ -112,8 +123,7 @@ export async function processScene(
         await xAddToStream(EMBED_STREAM, { chunkSetId: chunkSet.id });
         console.log(`[scene-worker] Pushed chunkSetId="${chunkSet.id}" to embed_stream`);
     } catch (e) {
-        console.error(`[scene-worker] Failed docId="${docId}" sceneIndex="${sceneIndex}":`, e);2
-        // After max retries claim loop DLQs with docId.
+        console.error(`[scene-worker] Failed docId="${docId}" sceneIndex="${sceneIndex}":`, e);
         throw e;
     } finally {
         cleanupTemp(tmpDir);

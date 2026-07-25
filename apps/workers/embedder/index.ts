@@ -66,6 +66,9 @@ export async function embedChunkSet(chunkSetId: string) {
 
                         const points = chunkSet.chunks.map((chunk, i) => {
                             const metadata = (chunk.metadata as Record<string, unknown>) ?? {};
+                            const tags = Array.isArray(metadata.tags)
+                                ? metadata.tags.filter((t): t is string => typeof t === "string")
+                                : [];
                             return {
                                 id: uuidv4(),
                                 vector: {
@@ -82,6 +85,11 @@ export async function embedChunkSet(chunkSetId: string) {
                                     chunkId: chunk.id,
                                     modality,
                                     chunkSetId,
+                                    documentTitle:
+                                        typeof metadata.documentTitle === "string"
+                                            ? metadata.documentTitle
+                                            : null,
+                                    tags,
                                     page: metadata.page ?? null,
                                     timestampStart: metadata.timestampStart ?? null,
                                     timestampEnd: metadata.timestampEnd ?? null,

@@ -6,6 +6,7 @@ import { prismaClient } from "@repo/prisma/client";
 import { downloadToDisk } from "../common/download.ts";
 import { cleanupTemp, extFromKey, fileToDataUrl, makeTempDir, mimeFromExt } from "../common/temp.ts";
 import { describeImage } from "../common/vision.ts";
+import { withChunkHeader, chunkMetadataPayload } from "../common/chunkMeta.ts";
 import path from "path";
 
 const IMAGE_STREAM = process.env.IMAGE_STREAM as string;
@@ -19,7 +20,7 @@ export async function processImage(docId: string) {
 
     const doc = await prismaClient.document.findUnique({
         where: { id: docId },
-        select: { ObjectKey: true, id: true, mimeType: true },
+        select: { ObjectKey: true, id: true, mimeType: true, title: true, tags: true, modality: true },
     });
     if (!doc) {
         console.log(`[image-worker] Document ${docId} not found — skipping`);
@@ -46,6 +47,12 @@ export async function processImage(docId: string) {
         const vision = await describeImage(dataUrl);
         console.log(`[image-worker] Vision done — caption=${vision.caption.length}c ocr=${vision.ocr.length}c`);
 
+        const docMeta = {
+            title: doc.title,
+            modality: doc.modality || "image",
+            tags: doc.tags,
+        };
+
         const chunkSet = await prismaClient.parsedChunkSet.create({
             data: {
                 documentId: docId,
@@ -54,12 +61,12 @@ export async function processImage(docId: string) {
                 chunks: {
                     create: [
                         {
-                            text: vision.text,
-                            metadata: {
+                            text: withChunkHeader(vision.text, docMeta),
+                            metadata: chunkMetadataPayload(docMeta, {
                                 page: null,
                                 caption: vision.caption || null,
                                 ocr: vision.ocr || null,
-                            },
+                            }),
                         },
                     ],
                 },

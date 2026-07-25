@@ -60,11 +60,32 @@ uploadRouter.post("/post-file-url", async (req, res) => {
 });
 
 
+/** Normalize free-form upload tags: trim, drop empty, dedupe case-insensitively. */
+function normalizeTags(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const maxTags = 20;
+    const maxLen = 40;
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of raw) {
+        if (typeof item !== "string") continue;
+        const tag = item.trim().slice(0, maxLen);
+        if (!tag) continue;
+        const key = tag.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(tag);
+        if (out.length >= maxTags) break;
+    }
+    return out;
+}
+
 uploadRouter.post("/confirm", async (req, res) => {
-    const { fileName, key, size, contentType } = req.body;
+    const { fileName, key, size, contentType, tags: rawTags } = req.body;
     const userId = req.userId
     const mimeType = contentType || (key?.startsWith("image/") ? "image/png" : key?.startsWith("audio/") ? "audio/mpeg" : key?.startsWith("video/") ? "video/mp4" : "application/pdf");
-    console.log(`[upload:confirm] Entry — userId=${userId}, fileName="${fileName}", key="${key}", size=${size}, mimeType="${mimeType}"`);
+    const tags = normalizeTags(rawTags);
+    console.log(`[upload:confirm] Entry — userId=${userId}, fileName="${fileName}", key="${key}", size=${size}, mimeType="${mimeType}", tags=${JSON.stringify(tags)}`);
 
     if (!key || !fileName || !userId || !size) {
         console.warn(`[upload:confirm] Missing required fields`);
@@ -98,7 +119,8 @@ uploadRouter.post("/confirm", async (req, res) => {
                     userId,
                     mimeType,
                     modality: modalityFromMime(mimeType),
-                    status: "UPLOADED"
+                    status: "UPLOADED",
+                    tags,
                 }
             });
             console.log(`[upload:confirm] Document created: id=${document.id}`);

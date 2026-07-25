@@ -6,6 +6,7 @@ import { prismaClient } from "@repo/prisma/client";
 import { downloadToDisk } from "../common/download.ts";
 import { cleanupTemp, extFromKey, makeTempDir } from "../common/temp.ts";
 import { chunkTranscript, transcribeAudioFile } from "../common/transcribe.ts";
+import { withChunkHeader, chunkMetadataPayload } from "../common/chunkMeta.ts";
 import path from "path";
 
 const AUDIO_STREAM = process.env.AUDIO_STREAM as string;
@@ -19,7 +20,7 @@ export async function processAudio(docId: string) {
 
     const doc = await prismaClient.document.findUnique({
         where: { id: docId },
-        select: { ObjectKey: true, id: true },
+        select: { ObjectKey: true, id: true, title: true, tags: true, modality: true },
     });
     if (!doc) {
         console.log(`[audio-worker] Document ${docId} not found — skipping`);
@@ -46,22 +47,31 @@ export async function processAudio(docId: string) {
         const timedChunks = chunkTranscript(transcript);
         console.log(`[audio-worker] Chunks: ${timedChunks.length}`);
 
+        const docMeta = {
+            title: doc.title,
+            modality: doc.modality || "audio",
+            tags: doc.tags,
+        };
+
         const chunkSet = await prismaClient.parsedChunkSet.create({
             data: {
                 documentId: docId,
                 modality: "audio",
                 status: "PARSED",
                 chunks: {
-                    create: timedChunks.map((c, i) => ({
-                        text: c.text,
-                        metadata: {
-                            chunkIndex: i,
-                            timestampStart: c.timestampStart,
-                            timestampEnd: c.timestampEnd,
-                            language: transcript.language ?? null,
-                            duration: transcript.duration ?? null,
-                        },
-                    })),
+                    create: timedChunks.map((c, i) => {
+                        const extraLines = [`Time: ${c.timestampStart}s–${c.timestampEnd}s`];
+                        return {
+                            text: withChunkHeader(c.text, { ...docMeta, extraLines }),
+                            metadata: chunkMetadataPayload(docMeta, {
+                                chunkIndex: i,
+                                timestampStart: c.timestampStart,
+                                timestampEnd: c.timestampEnd,
+                                language: transcript.language ?? null,
+                                duration: transcript.duration ?? null,
+                            }),
+                        };
+                    }),
                 },
             },
         });
