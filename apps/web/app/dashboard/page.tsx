@@ -3,14 +3,19 @@
 import { useCallback, useEffect, useState } from "react"
 import axios from "axios"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
+  AudioLines,
   ChevronDown,
   Download,
   FileText,
+  Film,
+  ImageIcon,
   Loader2,
   MessageSquare,
   RefreshCw,
   Search,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -34,6 +39,8 @@ import { cn } from "@/lib/utils"
 const API_BASE_UPLOAD = "http://localhost:3000/api/v1/upload"
 const API_BASE_DOWNLOAD = "http://localhost:3000/api/v1/download"
 const API_BASE_SEARCH = "http://localhost:3000/api/v1/search"
+
+type DashboardTab = "upload" | "search" | "chat"
 
 type DocStatus =
   | "UPLOADED"
@@ -129,12 +136,31 @@ function statusVariant(
   }
 }
 
+function modalityIcon(modality?: string | null) {
+  switch ((modality ?? "").toLowerCase()) {
+    case "image":
+      return ImageIcon
+    case "audio":
+      return AudioLines
+    case "video":
+      return Film
+    case "pdf":
+    default:
+      return FileText
+  }
+}
+
+function scorePercent(score: number) {
+  // RRF + tag boost typically lands roughly 0–0.8; map to a soft bar.
+  return Math.max(4, Math.min(100, Math.round(score * 120)))
+}
+
 const SEARCH_MODALITIES = [
-  { value: "", label: "Any" },
-  { value: "pdf", label: "PDF" },
-  { value: "image", label: "Image" },
-  { value: "audio", label: "Audio" },
-  { value: "video", label: "Video" },
+  { value: "", label: "Any", icon: Sparkles },
+  { value: "pdf", label: "PDF", icon: FileText },
+  { value: "image", label: "Image", icon: ImageIcon },
+  { value: "audio", label: "Audio", icon: AudioLines },
+  { value: "video", label: "Video", icon: Film },
 ] as const
 
 const pipeline = [
@@ -165,7 +191,35 @@ const pipeline = [
   },
 ]
 
+const TABS: {
+  id: DashboardTab
+  label: string
+  icon: typeof Upload
+  hint: string
+}[] = [
+  {
+    id: "upload",
+    label: "Upload",
+    icon: Upload,
+    hint: "Add files & manage library",
+  },
+  {
+    id: "search",
+    label: "Search",
+    icon: Search,
+    hint: "Find by meaning or tags",
+  },
+  {
+    id: "chat",
+    label: "Chat",
+    icon: MessageSquare,
+    hint: "Ask your knowledge base",
+  },
+]
+
 export default function Dashboard() {
+  const router = useRouter()
+  const [activeTab, setActiveTab] = useState<DashboardTab>("upload")
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -179,6 +233,7 @@ export default function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
 
   // Semantic document search
   const [searchQuery, setSearchQuery] = useState("")
@@ -269,6 +324,11 @@ export default function Dashboard() {
     setStatus("")
     setUploadTags([])
     setTagDraft("")
+  }
+
+  const pickFile = (selected: File | null | undefined) => {
+    setStatus("")
+    setFile(selected ?? null)
   }
 
   const handleUpload = async () => {
@@ -473,11 +533,13 @@ export default function Dashboard() {
   const isAudio = Boolean(file?.type.startsWith("audio/"))
   const isVideo = Boolean(file?.type.startsWith("video/"))
 
+  const readyCount = documents.filter((d) => d.status === "READY").length
+
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-50 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <Link href="/" className="flex items-center gap-2.5 tracking-tight">
+          <Link href="/dashboard" className="flex items-center gap-2.5 tracking-tight">
             <span className="font-display text-lg font-medium tracking-tight">
               RecallOS
             </span>
@@ -485,15 +547,15 @@ export default function Dashboard() {
 
           <nav className="flex items-center gap-1 sm:gap-2">
             <ThemeToggle />
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/chat">Chat</Link>
-            </Button>
           </nav>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12 sm:px-6 sm:py-16">
-        <div className="mb-12 flex max-w-2xl flex-col gap-4 sm:max-w-none sm:flex-row sm:items-end sm:justify-between">
+      <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6 sm:py-14">
+        <div className="archive-grid pointer-events-none absolute inset-x-0 top-0 h-72 opacity-25" />
+
+        {/* Hero */}
+        <div className="relative mb-10 flex max-w-2xl flex-col gap-5 sm:mb-12 sm:max-w-none sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-2xl">
             <p className="mb-3 font-mono text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
               Library
@@ -501,595 +563,837 @@ export default function Dashboard() {
             <h1 className="font-display text-5xl leading-[1.05] font-medium tracking-tight text-foreground sm:text-6xl md:text-7xl">
               Dashboard
             </h1>
-            <p className="mt-4 text-lg text-muted-foreground">
-              Upload documents to build{" "}
-              <span className="font-script text-2xl text-foreground">
-                searchable memory
-              </span>
-              . Files are stored, parsed, and queued for indexing.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            className="shrink-0 border-border/90 bg-card/60"
-            asChild
-          >
-            <Link href="/chat">
-              <MessageSquare className="size-4" />
-              Open chat
-            </Link>
-          </Button>
-        </div>
-
-        <div className="grid items-start gap-12 lg:grid-cols-5 lg:gap-16">
-          <section className="space-y-8 lg:col-span-3">
-            <div className="space-y-2">
-              <h2 className="font-display text-2xl font-medium tracking-tight">
-                Upload a document
-              </h2>
-              <p className="text-base text-muted-foreground">
-                PDFs work best right now. Upload uses a presigned URL — bytes go
-                straight to storage. Add tags so retrieval can find files by
-                trip, project, or topic.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="file" className="text-sm font-semibold">
-                Choose file
-              </Label>
-              <Input
-                id="file"
-                type="file"
-                accept=".pdf,application/pdf,image/*,audio/*,video/*"
-                className="h-12 cursor-pointer border-input bg-muted/40 pr-3 file:mr-4 file:h-full file:cursor-pointer file:rounded-md file:border-0 file:bg-primary file:px-4 file:text-sm file:font-semibold file:text-primary-foreground file:transition-colors hover:file:bg-primary/90"
-                onChange={(e) => {
-                  const selected = e.target.files?.[0]
-                  setStatus("")
-                  setFile(selected ?? null)
-                }}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="tags" className="text-sm font-semibold">
-                Tags{" "}
-                <span className="font-normal text-muted-foreground">
-                  (optional)
-                </span>
-              </Label>
-              <div className="flex flex-wrap gap-2">
-                {uploadTags.map((tag) => (
-                  <Badge
-                    key={tag}
-                    variant="secondary"
-                    className="gap-1 pr-1 font-normal"
-                  >
-                    {tag}
-                    <button
-                      type="button"
-                      className="rounded-sm p-0.5 hover:bg-muted"
-                      onClick={() => removeTag(tag)}
-                      aria-label={`Remove tag ${tag}`}
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
-              <Input
-                id="tags"
-                type="text"
-                value={tagDraft}
-                placeholder="e.g. paris, trip, resume — Enter or comma to add"
-                className="h-11 border-input bg-muted/40"
-                disabled={uploadTags.length >= 20}
-                onChange={(e) => setTagDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault()
-                    addTag(tagDraft)
-                  } else if (
-                    e.key === "Backspace" &&
-                    !tagDraft &&
-                    uploadTags.length > 0
-                  ) {
-                    removeTag(uploadTags[uploadTags.length - 1]!)
-                  }
-                }}
-                onBlur={() => {
-                  if (tagDraft.trim()) addTag(tagDraft)
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                Up to 20 tags. They are stored on the document and embedded with
-                every chunk for better search.
-              </p>
-            </div>
-
-            {file && previewUrl && (
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <FileText className="size-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold">{file.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {formatBytes(file.size)}
-                        {file.type ? ` · ${file.type}` : ""}
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={clearFile}
-                    aria-label="Remove selected file"
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
-
-                {isPdf ? (
-                  <iframe
-                    title={`Preview of ${file.name}`}
-                    src={previewUrl}
-                    className="h-[28rem] w-full rounded-md border-0 bg-muted/20"
-                  />
-                ) : isImage ? (
-                  <div className="flex max-h-[28rem] items-center justify-center bg-muted/10 p-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={previewUrl}
-                      alt={`Preview of ${file.name}`}
-                      className="max-h-[26rem] max-w-full object-contain"
-                    />
-                  </div>
-                ) : isVideo ? (
-                  <video
-                    src={previewUrl}
-                    controls
-                    className="max-h-[28rem] w-full rounded-md bg-muted/10"
-                  />
-                ) : isAudio ? (
-                  <div className="flex h-20 items-center justify-center rounded-md bg-muted/10">
-                    <audio
-                      src={previewUrl}
-                      controls
-                      className="w-full max-w-md px-4"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex h-40 flex-col items-center justify-center gap-2 text-center">
-                    <FileText className="size-8 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">
-                      Preview isn&apos;t available for this file type, but it is
-                      ready to upload.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-3">
-              <Button
-                onClick={handleUpload}
-                disabled={!file || uploading}
-                className="h-11 px-6 text-base font-semibold"
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Uploading…
-                  </>
-                ) : (
-                  <>
-                    <Upload className="size-4" />
-                    Submit file
-                  </>
-                )}
-              </Button>
-            </div>
-
-            {status && (
-              <div className="space-y-1">
-                <p className="text-sm font-semibold">Status</p>
-                <p
-                  className={
-                    status.toLowerCase().includes("failed")
-                      ? "text-sm font-medium text-destructive"
-                      : status === "Upload complete."
-                        ? "text-sm font-medium text-foreground"
-                        : "text-sm text-muted-foreground"
-                  }
-                >
-                  {status}
-                </p>
-              </div>
-            )}
-          </section>
-
-          <aside className="memory-glow self-start rounded-xl border border-border/80 bg-card/70 p-6 lg:sticky lg:top-20 lg:col-span-2">
-            <h2 className="font-display text-2xl font-medium tracking-tight">
-              Pipeline
-            </h2>
-            <p className="mt-1 text-base text-muted-foreground">
-              What happens after you upload.
-            </p>
-            <ol className="mt-8 space-y-0">
-              {pipeline.map((item, index) => (
-                <li
-                  key={item.step}
-                  className="relative flex gap-4 pb-6 last:pb-0"
-                >
-                  {index < pipeline.length - 1 && (
-                    <span
-                      className="absolute top-6 bottom-0 left-[0.55rem] w-px bg-border"
-                      aria-hidden
-                    />
-                  )}
-                  <span className="relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 font-mono text-[10px] font-semibold text-muted-foreground">
-                    {index + 1}
+            <p className="mt-4 max-w-xl text-lg text-muted-foreground">
+              {activeTab === "upload" ? (
+                <>
+                  Build{" "}
+                  <span className="font-script text-2xl text-foreground">
+                    searchable memory
                   </span>
-                  <div>
-                    <p className="font-medium leading-none tracking-tight">
-                      {item.title}
-                    </p>
-                    <p className="mt-1.5 text-sm text-muted-foreground">
-                      {item.body}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </aside>
-        </div>
-
-        {/* Semantic document search */}
-        <section className="mt-20 space-y-6 border-t border-border/80 pt-12">
-          <div>
-            <h2 className="font-display text-3xl font-medium tracking-tight">
-              Search your documents
-            </h2>
-            <p className="mt-1 text-base text-muted-foreground">
-              Ask in plain language — e.g. &ldquo;pics from my trip to
-              paris&rdquo;. Returns the most related documents from your
-              library.
+                  . Upload files, tag them, and watch the pipeline index
+                  everything.
+                </>
+              ) : (
+                <>
+                  Ask in plain language — hybrid retrieval finds the right docs
+                  across{" "}
+                  <span className="font-script text-2xl text-foreground">
+                    every modality
+                  </span>
+                  .
+                </>
+              )}
             </p>
           </div>
+          {documents.length > 0 && (
+            <div className="hidden items-center gap-2 rounded-full border border-border/70 bg-card/70 px-3 py-1.5 text-xs text-muted-foreground sm:flex">
+              <span className="font-mono tabular-nums text-foreground">
+                {documents.length}
+                {nextCursor ? "+" : ""}
+              </span>
+              docs
+              <span className="text-border">·</span>
+              <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                {readyCount}
+              </span>
+              ready
+            </div>
+          )}
+        </div>
 
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void runSearch(0, false)
-            }}
+        {/* Section switcher */}
+        <div className="relative mb-10">
+          <div
+            className="flex gap-1 rounded-2xl border border-border/80 bg-card/60 p-1.5 shadow-[0_1px_0_0_color-mix(in_oklch,var(--foreground)_4%,transparent)] backdrop-blur-sm sm:inline-flex sm:w-auto"
+            role="tablist"
+            aria-label="Dashboard section"
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="give me the pics from my trip to paris"
-                  className="h-12 border-input bg-muted/40 pl-10 text-base"
-                  disabled={searchLoading}
-                />
-              </div>
-              <Button
-                type="submit"
-                disabled={!searchQuery.trim() || searchLoading}
-                className="h-12 shrink-0 px-6 text-base font-semibold"
-              >
-                {searchLoading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Searching…
-                  </>
-                ) : (
-                  <>
-                    <Search className="size-4" />
-                    Search
-                  </>
-                )}
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted-foreground">Type</span>
-              <div
-                className="flex flex-wrap gap-1.5"
-                role="group"
-                aria-label="Filter by document type"
-              >
-                {SEARCH_MODALITIES.map((m) => {
-                  const active = searchModality === m.value
-                  return (
-                    <button
-                      key={m.value || "any"}
-                      type="button"
-                      disabled={searchLoading}
-                      onClick={() => setSearchModality(m.value)}
+            {TABS.map((tab) => {
+              const Icon = tab.icon
+              const active = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => {
+                    if (tab.id === "chat") {
+                      router.push("/chat")
+                      return
+                    }
+                    setActiveTab(tab.id)
+                  }}
+                  className={cn(
+                    "group relative flex min-w-0 flex-1 items-center gap-3 rounded-xl px-4 py-3 text-left transition-all sm:min-w-[11.5rem] sm:flex-none",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "flex size-9 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                      active
+                        ? "border-primary-foreground/20 bg-primary-foreground/10"
+                        : "border-border/70 bg-muted/50 group-hover:border-border"
+                    )}
+                  >
+                    <Icon className="size-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold tracking-tight">
+                      {tab.label}
+                    </span>
+                    <span
                       className={cn(
-                        "rounded-full border px-3 py-1 text-sm transition-colors",
+                        "mt-0.5 block truncate text-[11px] leading-tight",
                         active
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border/80 bg-muted/40 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
-                        searchLoading && "opacity-60"
+                          ? "text-primary-foreground/70"
+                          : "text-muted-foreground"
                       )}
-                      aria-pressed={active}
                     >
-                      {m.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </form>
-
-          {searchLoading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Running hybrid retrieval…
-            </div>
-          )}
-
-          {!searchLoading && searchError && (
-            <p className="text-sm font-medium text-destructive">{searchError}</p>
-          )}
-
-          {!searchLoading &&
-            hasSearched &&
-            !searchError &&
-            searchResults.length === 0 && (
-              <div className="rounded-xl border border-dashed border-border/90 bg-card/40 px-6 py-12 text-center">
-                <p className="font-display text-xl text-foreground">
-                  No matching documents
-                </p>
-                <p className="mt-2 text-base text-muted-foreground">
-                  Try different wording, or wait until uploads show Ready.
-                </p>
-              </div>
-            )}
-
-          {!searchLoading && searchResults.length > 0 && (
-            <>
-              <p className="text-sm text-muted-foreground">
-                Showing {searchResults.length}
-                {searchTotal > 0 ? ` of ${searchTotal}` : ""} related document
-                {searchTotal === 1 ? "" : "s"}
-              </p>
-              <ul className="overflow-hidden rounded-xl border border-border/80 bg-card/50">
-                {searchResults.map((doc, idx) => (
-                  <li
-                    key={`${doc.id}-${idx}`}
-                    className={cn(
-                      "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5",
-                      idx < searchResults.length - 1 &&
-                        "border-b border-border/60"
-                    )}
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
-                        <FileText className="size-4" />
-                      </span>
-                      <div className="min-w-0 space-y-1.5">
-                        <p className="truncate font-medium tracking-tight">
-                          {doc.title}
-                        </p>
-                        {doc.snippet && (
-                          <p className="line-clamp-2 text-sm text-muted-foreground">
-                            {doc.snippet}
-                          </p>
-                        )}
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {doc.modality && (
-                            <Badge variant="outline" className="font-mono text-[10px]">
-                              {doc.modality}
-                            </Badge>
-                          )}
-                          {(doc.tags ?? []).map((tag) => (
-                            <Badge
-                              key={tag}
-                              variant="secondary"
-                              className="font-normal"
-                            >
-                              {tag}
-                            </Badge>
-                          ))}
-                          <span className="font-mono text-xs text-muted-foreground">
-                            score {doc.score.toFixed(3)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2 sm:pl-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleDownload(doc.ObjectKey)}
-                      >
-                        <Download className="size-3.5" />
-                        Download
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {searchHasMore && (
-                <div className="flex justify-center pt-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={loadMoreSearch}
-                    disabled={searchLoadingMore}
-                    className="gap-1.5 text-muted-foreground hover:text-foreground"
-                  >
-                    {searchLoadingMore ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <ChevronDown className="size-3.5" />
-                    )}
-                    Load more
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-
-        {/* Documents library */}
-        <section className="mt-20 space-y-6 border-t border-border/80 pt-12">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="font-display text-3xl font-medium tracking-tight">
-                Your documents
-              </h2>
-              <p className="mt-1 text-base text-muted-foreground">
-                Everything you&apos;ve uploaded to organizational memory.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void fetchDocuments()}
-              disabled={docsLoading}
-              className="border-border/90 bg-card/60"
-            >
-              <RefreshCw
-                className={cn("size-3.5", docsLoading && "animate-spin")}
-              />
-              Refresh
-            </Button>
+                      {tab.hint}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
           </div>
+          <div className="mt-6 h-px w-full bg-gradient-to-r from-transparent via-border to-transparent" />
+        </div>
 
-          {docsLoading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Loading documents…
-            </div>
-          )}
+        {/* ───────── Upload section ───────── */}
+        {activeTab === "upload" && (
+          <div className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+            <div className="grid items-start gap-10 lg:grid-cols-5 lg:gap-12">
+              <section className="space-y-6 lg:col-span-3">
+                <div className="space-y-1.5">
+                  <h2 className="font-display text-2xl font-medium tracking-tight">
+                    Upload a document
+                  </h2>
+                  <p className="text-base text-muted-foreground">
+                    PDFs, images, audio, and video. Bytes go straight to storage
+                    via presigned URL. Tags improve retrieval.
+                  </p>
+                </div>
 
-          {!docsLoading && docsError && (
-            <p className="text-sm font-medium text-destructive">{docsError}</p>
-          )}
-
-          {!docsLoading && !docsError && documents.length === 0 && (
-            <div className="rounded-xl border border-dashed border-border/90 bg-card/40 px-6 py-12 text-center">
-              <p className="font-display text-xl text-foreground">
-                No documents yet
-              </p>
-              <p className="mt-2 text-base text-muted-foreground">
-                Upload a file above to start building memory.
-              </p>
-            </div>
-          )}
-
-          {!docsLoading && documents.length > 0 && (
-            <>
-              <ul className="overflow-hidden rounded-xl border border-border/80 bg-card/50">
-                {documents.map((doc, idx) => (
-                  <li
-                    key={doc.id}
-                    className={cn(
-                      "flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5",
-                      idx < documents.length - 1 && "border-b border-border/60",
-                      doc.status === "READY" &&
-                        "border-l-2 border-l-emerald-500/30 bg-emerald-500/10 backdrop-blur-sm",
-                      (doc.status === "PARSING" ||
-                        doc.status === "EMBEDDING") &&
-                        "border-l-2 border-l-muted-foreground/20 bg-muted/40",
-                      doc.status === "FAILED" &&
-                        "border-l-2 border-l-red-500/30 bg-red-500/10",
-                      (doc.status === "UPLOADED" ||
-                        doc.status === "QUEUED" ||
-                        doc.status === "PARSED" ||
-                        doc.status === "INDEXED") &&
-                        "my-1 rounded-lg border-2 border-dashed border-muted-foreground/30 bg-transparent"
-                    )}
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/15 bg-primary/8 text-muted-foreground">
-                        <FileText className="size-4" />
+                {/* Drop zone */}
+                <label
+                  htmlFor="file"
+                  onDragEnter={(e) => {
+                    e.preventDefault()
+                    setDragOver(true)
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setDragOver(true)
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault()
+                    setDragOver(false)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setDragOver(false)
+                    const dropped = e.dataTransfer.files?.[0]
+                    if (dropped) pickFile(dropped)
+                  }}
+                  className={cn(
+                    "group relative flex cursor-pointer flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-all",
+                    dragOver
+                      ? "border-primary bg-primary/5 shadow-inner"
+                      : "border-border/80 bg-card/40 hover:border-primary/40 hover:bg-card/70",
+                    file && "border-solid border-border/70 bg-card/60 py-6"
+                  )}
+                >
+                  <div className="archive-grid pointer-events-none absolute inset-0 opacity-20" />
+                  {!file ? (
+                    <>
+                      <span className="relative flex size-14 items-center justify-center rounded-2xl border border-border/80 bg-background/80 shadow-sm">
+                        <Upload className="size-6 text-muted-foreground transition-colors group-hover:text-foreground" />
                       </span>
-                      <div className="min-w-0">
-                        <p className="truncate font-medium tracking-tight">
-                          {doc.title}
+                      <div className="relative space-y-1">
+                        <p className="text-base font-medium tracking-tight">
+                          Drop a file here, or{" "}
+                          <span className="text-foreground underline decoration-border underline-offset-4">
+                            browse
+                          </span>
                         </p>
                         <p className="text-sm text-muted-foreground">
-                          {formatDate(doc.createdAt)}
-                        </p>
-                        {(doc.tags?.length ?? 0) > 0 && (
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            {doc.tags!.map((tag) => (
-                              <Badge
-                                key={tag}
-                                variant="secondary"
-                                className="font-normal"
-                              >
-                                {tag}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                          {doc.id}
+                          PDF · image · audio · video
                         </p>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2 sm:pl-4">
-                      <Badge variant={statusVariant(doc.status)}>
-                        {statusLabel(doc.status)}
-                      </Badge>
+                    </>
+                  ) : (
+                    <div className="relative flex w-full items-start justify-between gap-3 text-left">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/8">
+                          <FileText className="size-5 text-muted-foreground" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold">{file.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {formatBytes(file.size)}
+                            {file.type ? ` · ${file.type}` : ""}
+                          </p>
+                        </div>
+                      </div>
                       <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleDownload(doc.ObjectKey)}
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="relative z-10 shrink-0"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          clearFile()
+                        }}
+                        aria-label="Remove selected file"
                       >
-                        <Download className="size-3.5" />
-                        Download
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        disabled={deletingId === doc.id}
-                        onClick={() => setDeleteTarget(doc)}
-                      >
-                        {deletingId === doc.id ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="size-3.5" />
-                        )}
-                        Delete
+                        <X className="size-4" />
                       </Button>
                     </div>
-                  </li>
-                ))}
-              </ul>
-              {nextCursor && (
-                <div className="flex justify-center pt-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={loadMore}
-                    disabled={loadingMore}
-                    className="gap-1.5 text-muted-foreground hover:text-foreground"
-                  >
-                    {loadingMore ? (
-                      <Loader2 className="size-3.5 animate-spin" />
+                  )}
+                  <input
+                    id="file"
+                    type="file"
+                    accept=".pdf,application/pdf,image/*,audio/*,video/*"
+                    className="sr-only"
+                    onChange={(e) => pickFile(e.target.files?.[0])}
+                  />
+                </label>
+
+                {/* Preview */}
+                {file && previewUrl && (
+                  <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/50">
+                    {isPdf ? (
+                      <iframe
+                        title={`Preview of ${file.name}`}
+                        src={previewUrl}
+                        className="h-[26rem] w-full border-0 bg-muted/20"
+                      />
+                    ) : isImage ? (
+                      <div className="flex max-h-[26rem] items-center justify-center bg-muted/10 p-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={previewUrl}
+                          alt={`Preview of ${file.name}`}
+                          className="max-h-[24rem] max-w-full rounded-lg object-contain"
+                        />
+                      </div>
+                    ) : isVideo ? (
+                      <video
+                        src={previewUrl}
+                        controls
+                        className="max-h-[26rem] w-full bg-muted/10"
+                      />
+                    ) : isAudio ? (
+                      <div className="flex h-24 items-center justify-center bg-muted/10 px-4">
+                        <audio
+                          src={previewUrl}
+                          controls
+                          className="w-full max-w-md"
+                        />
+                      </div>
                     ) : (
-                      <ChevronDown className="size-3.5" />
+                      <div className="flex h-32 flex-col items-center justify-center gap-2 text-center">
+                        <FileText className="size-8 text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground">
+                          Preview isn&apos;t available for this type — ready to
+                          upload.
+                        </p>
+                      </div>
                     )}
-                    Load more
+                  </div>
+                )}
+
+                {/* Tags */}
+                <div className="space-y-2.5 rounded-2xl border border-border/80 bg-card/50 p-5">
+                  <Label htmlFor="tags" className="text-sm font-semibold">
+                    Tags{" "}
+                    <span className="font-normal text-muted-foreground">
+                      (optional)
+                    </span>
+                  </Label>
+                  {uploadTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {uploadTags.map((tag) => (
+                        <Badge
+                          key={tag}
+                          variant="secondary"
+                          className="gap-1 pr-1 font-normal"
+                        >
+                          {tag}
+                          <button
+                            type="button"
+                            className="rounded-sm p-0.5 hover:bg-muted"
+                            onClick={() => removeTag(tag)}
+                            aria-label={`Remove tag ${tag}`}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <Input
+                    id="tags"
+                    type="text"
+                    value={tagDraft}
+                    placeholder="e.g. paris, trip, resume — Enter or comma to add"
+                    className="h-11 border-input bg-background/60"
+                    disabled={uploadTags.length >= 20}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault()
+                        addTag(tagDraft)
+                      } else if (
+                        e.key === "Backspace" &&
+                        !tagDraft &&
+                        uploadTags.length > 0
+                      ) {
+                        removeTag(uploadTags[uploadTags.length - 1]!)
+                      }
+                    }}
+                    onBlur={() => {
+                      if (tagDraft.trim()) addTag(tagDraft)
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Up to 20 tags. Stored on the document and embedded with every
+                    chunk.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    onClick={handleUpload}
+                    disabled={!file || uploading}
+                    className="h-11 px-6 text-base font-semibold"
+                  >
+                    {uploading ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        Uploading…
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="size-4" />
+                        Submit file
+                      </>
+                    )}
                   </Button>
+                  {status && (
+                    <p
+                      className={cn(
+                        "text-sm font-medium",
+                        status.toLowerCase().includes("failed")
+                          ? "text-destructive"
+                          : status === "Upload complete."
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-muted-foreground"
+                      )}
+                    >
+                      {status}
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <aside className="memory-glow self-start rounded-2xl border border-border/80 bg-card/80 p-6 lg:sticky lg:top-20 lg:col-span-2">
+                <p className="font-mono text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                  After upload
+                </p>
+                <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">
+                  Pipeline
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  What happens once the file lands.
+                </p>
+                <ol className="mt-7 space-y-0">
+                  {pipeline.map((item, index) => (
+                    <li
+                      key={item.step}
+                      className="relative flex gap-4 pb-6 last:pb-0"
+                    >
+                      {index < pipeline.length - 1 && (
+                        <span
+                          className="absolute top-6 bottom-0 left-[0.55rem] w-px bg-border"
+                          aria-hidden
+                        />
+                      )}
+                      <span className="relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 font-mono text-[10px] font-semibold text-muted-foreground">
+                        {index + 1}
+                      </span>
+                      <div>
+                        <p className="font-medium leading-none tracking-tight">
+                          {item.title}
+                        </p>
+                        <p className="mt-1.5 text-sm text-muted-foreground">
+                          {item.body}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </aside>
+            </div>
+
+            {/* Documents library — upload section only */}
+            <section className="mt-16 space-y-6 border-t border-border/70 pt-12">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="mb-1.5 font-mono text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                    Library
+                  </p>
+                  <h2 className="font-display text-3xl font-medium tracking-tight">
+                    Your documents
+                  </h2>
+                  <p className="mt-1 text-base text-muted-foreground">
+                    Everything you&apos;ve uploaded to organizational memory.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void fetchDocuments()}
+                  disabled={docsLoading}
+                  className="border-border/90 bg-card/60"
+                >
+                  <RefreshCw
+                    className={cn("size-3.5", docsLoading && "animate-spin")}
+                  />
+                  Refresh
+                </Button>
+              </div>
+
+              {docsLoading && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading documents…
                 </div>
               )}
-            </>
-          )}
-        </section>
+
+              {!docsLoading && docsError && (
+                <p className="text-sm font-medium text-destructive">{docsError}</p>
+              )}
+
+              {!docsLoading && !docsError && documents.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-border/90 bg-card/40 px-6 py-14 text-center">
+                  <span className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl border border-border/80 bg-background">
+                    <FileText className="size-5 text-muted-foreground" />
+                  </span>
+                  <p className="font-display text-xl text-foreground">
+                    No documents yet
+                  </p>
+                  <p className="mt-2 text-base text-muted-foreground">
+                    Drop a file above to start building memory.
+                  </p>
+                </div>
+              )}
+
+              {!docsLoading && documents.length > 0 && (
+                <>
+                  <ul className="space-y-2.5">
+                    {documents.map((doc) => {
+                      const Icon = modalityIcon(doc.modality)
+                      return (
+                        <li
+                          key={doc.id}
+                          className={cn(
+                            "group flex flex-col gap-3 rounded-2xl border border-border/80 bg-card/60 px-4 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between sm:px-5",
+                            "hover:border-border hover:bg-card/90",
+                            doc.status === "READY" &&
+                              "border-l-[3px] border-l-emerald-500/50",
+                            (doc.status === "PARSING" ||
+                              doc.status === "EMBEDDING") &&
+                              "border-l-[3px] border-l-muted-foreground/35",
+                            doc.status === "FAILED" &&
+                              "border-l-[3px] border-l-red-500/50 bg-red-500/[0.04]",
+                            (doc.status === "UPLOADED" ||
+                              doc.status === "QUEUED" ||
+                              doc.status === "PARSED" ||
+                              doc.status === "INDEXED") &&
+                              "border-dashed"
+                          )}
+                        >
+                          <div className="flex min-w-0 items-start gap-3">
+                            <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/12 bg-primary/[0.06] text-muted-foreground">
+                              <Icon className="size-4" />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate font-medium tracking-tight">
+                                {doc.title}
+                              </p>
+                              <p className="mt-0.5 text-sm text-muted-foreground">
+                                {formatDate(doc.createdAt)}
+                                {doc.modality ? (
+                                  <span className="text-border"> · </span>
+                                ) : null}
+                                {doc.modality && (
+                                  <span className="font-mono text-xs uppercase tracking-wide">
+                                    {doc.modality}
+                                  </span>
+                                )}
+                              </p>
+                              {(doc.tags?.length ?? 0) > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {doc.tags!.map((tag) => (
+                                    <Badge
+                                      key={tag}
+                                      variant="secondary"
+                                      className="font-normal"
+                                    >
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2 sm:pl-4">
+                            <Badge variant={statusVariant(doc.status)}>
+                              {statusLabel(doc.status)}
+                            </Badge>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void handleDownload(doc.ObjectKey)}
+                            >
+                              <Download className="size-3.5" />
+                              Download
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              disabled={deletingId === doc.id}
+                              onClick={() => setDeleteTarget(doc)}
+                            >
+                              {deletingId === doc.id ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-3.5" />
+                              )}
+                              Delete
+                            </Button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {nextCursor && (
+                    <div className="flex justify-center pt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={loadMore}
+                        disabled={loadingMore}
+                        className="gap-1.5 text-muted-foreground hover:text-foreground"
+                      >
+                        {loadingMore ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <ChevronDown className="size-3.5" />
+                        )}
+                        Load more
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* ───────── Search section ───────── */}
+        {activeTab === "search" && (
+          <div className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+            <section className="mx-auto max-w-3xl space-y-8">
+              <div className="text-center">
+                <p className="mb-2 font-mono text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+                  Hybrid retrieval
+                </p>
+                <h2 className="font-display text-3xl font-medium tracking-tight sm:text-4xl">
+                  Search your{" "}
+                  <span className="font-script">memory</span>
+                </h2>
+                <p className="mx-auto mt-2 max-w-md text-base text-muted-foreground">
+                  Dense + sparse vectors fused with RRF. Filter by type when you
+                  know what you want.
+                </p>
+              </div>
+
+              <form
+                className="memory-glow space-y-5 rounded-2xl border border-border/80 bg-card/80 p-5 sm:p-6"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void runSearch(0, false)
+                }}
+              >
+                <div className="relative">
+                  <Search className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="pics from my trip to paris…"
+                    className="h-14 border-input bg-background/70 pl-12 pr-4 text-base shadow-none sm:text-lg"
+                    disabled={searchLoading}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div
+                    className="flex flex-wrap gap-1.5"
+                    role="group"
+                    aria-label="Filter by document type"
+                  >
+                    {SEARCH_MODALITIES.map((m) => {
+                      const active = searchModality === m.value
+                      const Icon = m.icon
+                      return (
+                        <button
+                          key={m.value || "any"}
+                          type="button"
+                          disabled={searchLoading}
+                          onClick={() => setSearchModality(m.value)}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-all",
+                            active
+                              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                              : "border-border/80 bg-background/50 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
+                            searchLoading && "opacity-60"
+                          )}
+                          aria-pressed={active}
+                        >
+                          <Icon className="size-3.5" />
+                          {m.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <Button
+                    type="submit"
+                    disabled={!searchQuery.trim() || searchLoading}
+                    className="h-11 shrink-0 px-6 text-base font-semibold sm:min-w-[8.5rem]"
+                  >
+                    {searchLoading ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        Searching…
+                      </>
+                    ) : (
+                      <>
+                        <Search className="size-4" />
+                        Search
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+
+              {searchLoading && (
+                <div className="flex flex-col items-center gap-3 py-10 text-center">
+                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">Running hybrid retrieval</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Dense · sparse · RRF fusion
+                      {searchModality ? ` · ${searchModality} only` : ""}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {!searchLoading && searchError && (
+                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-center">
+                  <p className="text-sm font-medium text-destructive">
+                    {searchError}
+                  </p>
+                </div>
+              )}
+
+              {!searchLoading && !hasSearched && (
+                <div className="rounded-2xl border border-dashed border-border/80 bg-card/30 px-6 py-14 text-center">
+                  <span className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl border border-border/80 bg-background">
+                    <Sparkles className="size-5 text-muted-foreground" />
+                  </span>
+                  <p className="font-display text-xl text-foreground">
+                    Try a natural query
+                  </p>
+                  <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                    e.g. &ldquo;quarterly revenue notes&rdquo; or &ldquo;beach
+                    photos from italy&rdquo;
+                  </p>
+                  <div className="mt-5 flex flex-wrap justify-center gap-2">
+                    {[
+                      "pics from my trip to paris",
+                      "resume pdf",
+                      "meeting audio notes",
+                    ].map((example) => (
+                      <button
+                        key={example}
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery(example)
+                        }}
+                        className="rounded-full border border-border/80 bg-card/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
+                      >
+                        {example}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!searchLoading &&
+                hasSearched &&
+                !searchError &&
+                searchResults.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-border/90 bg-card/40 px-6 py-14 text-center">
+                    <p className="font-display text-xl text-foreground">
+                      No matching documents
+                    </p>
+                    <p className="mt-2 text-base text-muted-foreground">
+                      Try different wording, clear the type filter, or wait until
+                      uploads show Ready.
+                    </p>
+                  </div>
+                )}
+
+              {!searchLoading && searchResults.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-mono tabular-nums text-foreground">
+                        {searchResults.length}
+                      </span>
+                      {searchTotal > 0 ? (
+                        <>
+                          {" "}
+                          of{" "}
+                          <span className="font-mono tabular-nums text-foreground">
+                            {searchTotal}
+                          </span>
+                        </>
+                      ) : null}{" "}
+                      related document
+                      {searchTotal === 1 ? "" : "s"}
+                      {searchModality ? (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          ·{" "}
+                          <span className="font-mono text-xs uppercase">
+                            {searchModality}
+                          </span>
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+
+                  <ul className="space-y-3">
+                    {searchResults.map((doc, idx) => {
+                      const Icon = modalityIcon(doc.modality)
+                      const pct = scorePercent(doc.score)
+                      return (
+                        <li
+                          key={`${doc.id}-${idx}`}
+                          className="group overflow-hidden rounded-2xl border border-border/80 bg-card/70 transition-all hover:border-border hover:bg-card hover:shadow-[0_8px_30px_-18px_color-mix(in_oklch,var(--foreground)_18%,transparent)]"
+                        >
+                          <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+                            <div className="flex min-w-0 flex-1 items-start gap-3.5">
+                              <span className="mt-0.5 flex size-11 shrink-0 items-center justify-center rounded-xl border border-primary/12 bg-primary/[0.06] text-muted-foreground">
+                                <Icon className="size-4" />
+                              </span>
+                              <div className="min-w-0 flex-1 space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="truncate font-medium tracking-tight">
+                                    {doc.title}
+                                  </p>
+                                  {doc.modality && (
+                                    <Badge
+                                      variant="outline"
+                                      className="font-mono text-[10px] uppercase"
+                                    >
+                                      {doc.modality}
+                                    </Badge>
+                                  )}
+                                </div>
+                                {doc.snippet && (
+                                  <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+                                    {doc.snippet}
+                                  </p>
+                                )}
+                                {(doc.tags ?? []).length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {(doc.tags ?? []).map((tag) => (
+                                      <Badge
+                                        key={tag}
+                                        variant="secondary"
+                                        className="font-normal"
+                                      >
+                                        {tag}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-2.5 pt-0.5">
+                                  <div className="h-1.5 max-w-[7rem] flex-1 overflow-hidden rounded-full bg-muted">
+                                    <div
+                                      className="h-full rounded-full bg-foreground/70 transition-all"
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                  <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                                    {doc.score.toFixed(3)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2 sm:pl-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleDownload(doc.ObjectKey)}
+                              >
+                                <Download className="size-3.5" />
+                                Download
+                              </Button>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+
+                  {searchHasMore && (
+                    <div className="flex justify-center pt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={loadMoreSearch}
+                        disabled={searchLoadingMore}
+                        className="gap-1.5 text-muted-foreground hover:text-foreground"
+                      >
+                        {searchLoadingMore ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <ChevronDown className="size-3.5" />
+                        )}
+                        Load more
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
       </main>
 
       <Dialog
@@ -1115,7 +1419,10 @@ export default function Dashboard() {
               onClick={() => void confirmDeleteDocument()}
             >
               {deletingId ? (
-                <Loader2 className="size-4 animate-spin" />
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Deleting…
+                </>
               ) : (
                 "Delete"
               )}

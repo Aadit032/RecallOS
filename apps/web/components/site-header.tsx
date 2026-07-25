@@ -34,10 +34,10 @@ export function SiteHeader({ variant = "marketing" }: SiteHeaderProps) {
           ) : (
             <>
               <Button variant="ghost" size="sm" asChild>
-                <Link href="/chat">Chat</Link>
+                <Link href="/dashboard">Dashboard</Link>
               </Button>
               <Button variant="ghost" size="sm" asChild>
-                <Link href="/">Home</Link>
+                <Link href="/chat">Chat</Link>
               </Button>
             </>
           )}
