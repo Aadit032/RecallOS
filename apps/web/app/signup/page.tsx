@@ -1,43 +1,47 @@
 "use client"
 
-import { useRef, useState } from "react"
-import axios from "axios"
+import { useRef } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { useMutation } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { signup } from "@/lib/api/auth"
+import { getErrorMessage } from "@/lib/api"
 
 export default function Signup() {
   const router = useRouter()
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
 
-  async function handleAuth(e: React.FormEvent) {
+  const signupMutation = useMutation({
+    mutationFn: ({
+      username,
+      password,
+    }: {
+      username: string
+      password: string
+    }) => signup(username, password),
+    onSuccess: () => {
+      router.push("/signin")
+    },
+  })
+
+  function handleAuth(e: React.FormEvent) {
     e.preventDefault()
     const username = usernameRef.current?.value
     const password = passwordRef.current?.value
-
-    setLoading(true)
-    setError("")
-
-    try {
-      await axios.post("http://localhost:3000/api/v1/auth/signup", {
-        username,
-        password,
-      })
-      router.push("/signin")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign up failed. Try again.")
-    } finally {
-      setLoading(false)
-    }
+    if (!username || !password) return
+    signupMutation.mutate({ username, password })
   }
+
+  const error = signupMutation.isError
+    ? getErrorMessage(signupMutation.error, "Sign up failed. Try again.")
+    : ""
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -111,9 +115,9 @@ export default function Signup() {
               <Button
                 type="submit"
                 className="h-11 w-full text-base font-medium"
-                disabled={loading}
+                disabled={signupMutation.isPending}
               >
-                {loading ? (
+                {signupMutation.isPending ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
                     Creating account…

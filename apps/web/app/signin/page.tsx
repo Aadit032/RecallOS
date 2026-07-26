@@ -1,45 +1,48 @@
 "use client"
 
-import { useRef, useState } from "react"
-import axios from "axios"
+import { useRef } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { useMutation } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { signin } from "@/lib/api/auth"
+import { getErrorMessage } from "@/lib/api"
 
 export default function Signin() {
   const router = useRouter()
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
 
-  async function handleAuth(e: React.FormEvent) {
+  const signinMutation = useMutation({
+    mutationFn: ({
+      username,
+      password,
+    }: {
+      username: string
+      password: string
+    }) => signin(username, password),
+    onSuccess: (data) => {
+      localStorage.setItem("token", data.token)
+      router.push("/dashboard")
+    },
+  })
+
+  function handleAuth(e: React.FormEvent) {
     e.preventDefault()
     const username = usernameRef.current?.value
     const password = passwordRef.current?.value
-
-    setLoading(true)
-    setError("")
-
-    try {
-      const res = await axios.post("http://localhost:3000/api/v1/auth/signin", {
-        username,
-        password,
-      })
-      const token = res.data.token
-      localStorage.setItem("token", token)
-      router.push("/dashboard")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign in failed. Try again.")
-    } finally {
-      setLoading(false)
-    }
+    if (!username || !password) return
+    signinMutation.mutate({ username, password })
   }
+
+  const error = signinMutation.isError
+    ? getErrorMessage(signinMutation.error, "Sign in failed. Try again.")
+    : ""
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -113,9 +116,9 @@ export default function Signin() {
               <Button
                 type="submit"
                 className="h-11 w-full text-base font-medium"
-                disabled={loading}
+                disabled={signinMutation.isPending}
               >
-                {loading ? (
+                {signinMutation.isPending ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
                     Signing in…

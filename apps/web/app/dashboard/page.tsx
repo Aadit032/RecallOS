@@ -1,9 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
-import axios from "axios"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query"
 import {
   AudioLines,
   ChevronDown,
@@ -34,47 +38,20 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { getErrorMessage } from "@/lib/api"
+import {
+  deleteDocument,
+  fetchDocumentsPage,
+  getDownloadUrl,
+  uploadDocument,
+  type DocStatus,
+  type DocumentItem,
+} from "@/lib/api/documents"
+import { searchDocuments } from "@/lib/api/search"
+import { queryKeys } from "@/lib/query-keys"
 import { cn } from "@/lib/utils"
 
-const API_BASE_UPLOAD = "http://localhost:3000/api/v1/upload"
-const API_BASE_DOWNLOAD = "http://localhost:3000/api/v1/download"
-const API_BASE_SEARCH = "http://localhost:3000/api/v1/search"
-
 type DashboardTab = "upload" | "search" | "chat"
-
-type DocStatus =
-  | "UPLOADED"
-  | "QUEUED"
-  | "PARSING"
-  | "PARSED"
-  | "EMBEDDING"
-  | "INDEXED"
-  | "READY"
-  | "FAILED"
-
-type DocumentItem = {
-  id: string
-  title: string
-  status: DocStatus
-  ObjectKey: string
-  modality?: string
-  tags?: string[]
-  createdAt: string
-  updatedAt: string
-}
-
-type SearchResult = {
-  id: string
-  title: string
-  ObjectKey: string
-  modality: string
-  mimeType: string
-  tags: string[]
-  status: string
-  createdAt: string
-  score: number
-  snippet: string | null
-}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -219,69 +196,144 @@ const TABS: {
 
 export default function Dashboard() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState<DashboardTab>("upload")
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
   const [status, setStatus] = useState("")
   const [uploadTags, setUploadTags] = useState<string[]>([])
   const [tagDraft, setTagDraft] = useState("")
-  const [documents, setDocuments] = useState<DocumentItem[]>([])
-  const [docsLoading, setDocsLoading] = useState(true)
-  const [docsError, setDocsError] = useState("")
-  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [dragOver, setDragOver] = useState(false)
 
   // Semantic document search
   const [searchQuery, setSearchQuery] = useState("")
   /** Empty string = any modality */
   const [searchModality, setSearchModality] = useState("")
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
-  const [searchLoadingMore, setSearchLoadingMore] = useState(false)
-  const [searchError, setSearchError] = useState("")
-  const [searchHasMore, setSearchHasMore] = useState(false)
-  const [searchNextOffset, setSearchNextOffset] = useState<number | null>(null)
-  const [searchTotal, setSearchTotal] = useState(0)
-  const [hasSearched, setHasSearched] = useState(false)
+  const [activeSearch, setActiveSearch] = useState<{
+    query: string
+    modality: string
+  } | null>(null)
 
-  const fetchDocuments = useCallback(async (cursor?: string) => {
-    const isInitial = cursor === undefined
-    console.log(
-      `[dashboard:fetchDocuments] ${isInitial ? "Initial load" : "Load more"}, cursor="${cursor ?? "none"}"`
-    )
-    if (isInitial) setDocsLoading(true)
-    else setLoadingMore(true)
-    setDocsError("")
-    try {
-      const token = localStorage.getItem("token")
-      const params: Record<string, string | number> = { limit: 10 }
-      if (cursor) params.cursor = cursor
-      const { data } = await axios.get(`${API_BASE_DOWNLOAD}/list`, {
-        params,
-        headers: { Authorization: "Bearer " + token },
-      })
-      console.log(
-        `[dashboard:fetchDocuments] Received ${data.documents?.length ?? 0} documents, nextCursor=${data.nextCursor}`
+  const documentsQuery = useInfiniteQuery({
+    queryKey: queryKeys.documents.list(),
+    queryFn: ({ pageParam }) => fetchDocumentsPage(pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  })
+
+  const documents = useMemo(
+    () => documentsQuery.data?.pages.flatMap((p) => p.documents) ?? [],
+    [documentsQuery.data]
+  )
+  const docsLoading = documentsQuery.isLoading
+  const docsError = documentsQuery.isError
+    ? "Could not load documents. Sign in and try again."
+    : ""
+  const nextCursor =
+    documentsQuery.data?.pages.at(-1)?.nextCursor ?? null
+  const loadingMore = documentsQuery.isFetchingNextPage
+
+  const searchQueryResult = useInfiniteQuery({
+    queryKey: queryKeys.search.results(
+      activeSearch?.query ?? "",
+      activeSearch?.modality ?? ""
+    ),
+    queryFn: ({ pageParam }) =>
+      searchDocuments({
+        query: activeSearch!.query,
+        offset: pageParam,
+        modality: activeSearch!.modality || undefined,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) =>
+      lastPage.hasMore && lastPage.nextOffset != null
+        ? lastPage.nextOffset
+        : undefined,
+    enabled: Boolean(activeSearch?.query),
+  })
+
+  const searchResults = useMemo(
+    () => searchQueryResult.data?.pages.flatMap((p) => p.documents) ?? [],
+    [searchQueryResult.data]
+  )
+  const searchLoading = searchQueryResult.isLoading || searchQueryResult.isFetching
+  const searchLoadingMore = searchQueryResult.isFetchingNextPage
+  const searchError = searchQueryResult.isError
+    ? getErrorMessage(searchQueryResult.error, "Search failed")
+    : ""
+  const searchHasMore = Boolean(searchQueryResult.hasNextPage)
+  const searchTotal =
+    searchQueryResult.data?.pages[0]?.totalMatched ?? searchResults.length
+  const hasSearched = activeSearch !== null
+  // Only show full-page spinner on the first page of a search, not on load-more
+  const searchInitialLoading =
+    Boolean(activeSearch) &&
+    searchQueryResult.isFetching &&
+    !searchQueryResult.isFetchingNextPage &&
+    !searchQueryResult.data
+
+  const uploadMutation = useMutation({
+    mutationFn: async ({
+      file,
+      tags,
+    }: {
+      file: File
+      tags: string[]
+    }) => uploadDocument(file, tags, setStatus),
+    onSuccess: () => {
+      setFile(null)
+      setUploadTags([])
+      setTagDraft("")
+      setStatus("Upload complete.")
+      void queryClient.invalidateQueries({ queryKey: queryKeys.documents.all })
+    },
+    onError: () => {
+      setStatus("Upload failed.")
+    },
+  })
+  const uploading = uploadMutation.isPending
+
+  const downloadMutation = useMutation({
+    mutationFn: (key: string) => getDownloadUrl(key),
+    onSuccess: (url) => {
+      window.open(url, "_blank")
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteDocument(id),
+    onSuccess: (_data, id) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.documents.all })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.search.all })
+      // Optimistically drop from search cache pages if present
+      queryClient.setQueriesData(
+        { queryKey: queryKeys.search.all },
+        (old: unknown) => {
+          if (!old || typeof old !== "object" || !("pages" in old)) return old
+          const data = old as {
+            pages: { documents: DocumentItem[] }[]
+            pageParams: unknown[]
+          }
+          return {
+            ...data,
+            pages: data.pages.map((page) => ({
+              ...page,
+              documents: page.documents.filter((d) => d.id !== id),
+            })),
+          }
+        }
       )
-      if (isInitial) setDocuments(data.documents ?? [])
-      else setDocuments((prev) => [...prev, ...(data.documents ?? [])])
-      setNextCursor(data.nextCursor ?? null)
-    } catch (e) {
-      console.error(`[dashboard:fetchDocuments] Error:`, e)
-      setDocsError("Could not load documents. Sign in and try again.")
-    } finally {
-      if (isInitial) setDocsLoading(false)
-      else setLoadingMore(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void fetchDocuments()
-  }, [fetchDocuments])
+      setDeleteTarget(null)
+    },
+    onError: (e) => {
+      setDeleteTarget(null)
+      console.error(`[dashboard:delete]`, e)
+    },
+  })
+  const deletingId = deleteMutation.isPending
+    ? (deleteMutation.variables ?? null)
+    : null
 
   useEffect(() => {
     if (!file) {
@@ -331,200 +383,43 @@ export default function Dashboard() {
     setFile(selected ?? null)
   }
 
-  const handleUpload = async () => {
-    if (!file) {
-      console.log(`[dashboard:handleUpload] No file selected`)
-      return
-    }
-    console.log(
-      `[dashboard:handleUpload] Starting upload: name="${file.name}", size=${file.size}, type="${file.type}", tags=${JSON.stringify(uploadTags)}`
-    )
-    setUploading(true)
+  const handleUpload = () => {
+    if (!file || uploading) return
+    uploadMutation.mutate({ file, tags: uploadTags })
+  }
 
-    try {
-      setStatus("Requesting upload URL…")
-      const token = localStorage.getItem("token")
+  const runSearch = () => {
+    const q = searchQuery.trim()
+    if (!q) return
+    const next = { query: q, modality: searchModality }
+    setActiveSearch(next)
+    // Re-run even if the same query key is already cached
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.search.results(next.query, next.modality),
+    })
+  }
 
-      const {
-        data: { presignedUrl, key },
-      } = await axios.post(
-        `${API_BASE_UPLOAD}/post-file-url`,
-        { fileName: file.name, contentType: file.type },
-        {
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-        }
-      )
-      console.log(`[dashboard:handleUpload] Got presigned URL and key="${key}"`)
-
-      setStatus("Uploading file…")
-      console.log(`[dashboard:handleUpload] PUT to MinIO presigned URL`)
-      const res = await axios.put(presignedUrl, file, {
-        headers: { "Content-Type": file.type },
-      })
-      console.log(`[dashboard:handleUpload] PUT response status=${res.status}`)
-
-      if (res.status == 200) {
-        setStatus("Confirming upload…")
-        console.log(
-          `[dashboard:handleUpload] POST /confirm — fileName="${file.name}", key="${key}", size=${file.size}`
-        )
-        const { data } = await axios.post(
-          `${API_BASE_UPLOAD}/confirm`,
-          {
-            fileName: file.name,
-            key,
-            size: file.size,
-            contentType: file.type,
-            tags: uploadTags,
-          },
-          {
-            headers: {
-              Authorization: "Bearer " + token,
-            },
-          }
-        )
-        console.log(
-          `[dashboard:handleUpload] Upload confirmed: documentId=${data.documentId}`
-        )
-        setFile(null)
-        setUploadTags([])
-        setTagDraft("")
-        setStatus("Upload complete.")
-        void fetchDocuments()
-      } else {
-        console.warn(
-          `[dashboard:handleUpload] Unexpected PUT status: ${res.status}`
-        )
-        setStatus("Upload failed — unexpected response.")
-      }
-    } catch (e) {
-      console.error(`[dashboard:handleUpload] Error:`, e)
-      setStatus("Upload failed.")
-    } finally {
-      setUploading(false)
-      console.log(`[dashboard:handleUpload] Done`)
+  const loadMoreSearch = () => {
+    if (searchHasMore && !searchLoadingMore && !searchInitialLoading) {
+      void searchQueryResult.fetchNextPage()
     }
   }
 
-  const runSearch = useCallback(
-    async (offset = 0, append = false) => {
-      const q = searchQuery.trim()
-      if (!q) return
-
-      if (append) setSearchLoadingMore(true)
-      else {
-        setSearchLoading(true)
-        setSearchError("")
-        setHasSearched(true)
-      }
-
-      try {
-        const token = localStorage.getItem("token")
-        const body: {
-          query: string
-          limit: number
-          offset: number
-          modality?: string
-        } = { query: q, limit: 10, offset }
-        if (searchModality) body.modality = searchModality
-
-        const { data } = await axios.post(`${API_BASE_SEARCH}/`, body, {
-          headers: { Authorization: "Bearer " + token },
-        })
-        const docs: SearchResult[] = data.documents ?? []
-        if (append) setSearchResults((prev) => [...prev, ...docs])
-        else setSearchResults(docs)
-        setSearchHasMore(Boolean(data.hasMore))
-        setSearchNextOffset(
-          typeof data.nextOffset === "number" ? data.nextOffset : null
-        )
-        setSearchTotal(
-          typeof data.totalMatched === "number" ? data.totalMatched : docs.length
-        )
-      } catch (e) {
-        console.error(`[dashboard:search] Error:`, e)
-        if (!append) {
-          setSearchResults([])
-          setSearchHasMore(false)
-          setSearchNextOffset(null)
-          setSearchTotal(0)
-        }
-        setSearchError(
-          axios.isAxiosError(e)
-            ? (e.response?.data?.message as string) || e.message
-            : "Search failed"
-        )
-      } finally {
-        if (append) setSearchLoadingMore(false)
-        else setSearchLoading(false)
-      }
-    },
-    [searchQuery, searchModality]
-  )
-
-  const loadMoreSearch = useCallback(() => {
-    if (
-      searchNextOffset != null &&
-      searchHasMore &&
-      !searchLoadingMore &&
-      !searchLoading
-    ) {
-      void runSearch(searchNextOffset, true)
-    }
-  }, [
-    searchNextOffset,
-    searchHasMore,
-    searchLoadingMore,
-    searchLoading,
-    runSearch,
-  ])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor && !loadingMore) void fetchDocuments(nextCursor)
-  }, [nextCursor, loadingMore, fetchDocuments])
-
-  const handleDownload = async (key: string) => {
-    console.log(`[dashboard:handleDownload] Getting download URL for key="${key}"`)
-    const token = localStorage.getItem("token")
-    const { data } = await axios.post(
-      `${API_BASE_DOWNLOAD}/get-download-url`,
-      { key },
-      {
-        headers: {
-          Authorization: "Bearer " + token,
-        },
-      }
-    )
-    window.open(data.presignedUrl, "_blank")
+  const loadMore = () => {
+    if (nextCursor && !loadingMore) void documentsQuery.fetchNextPage()
   }
 
-  const confirmDeleteDocument = async () => {
-    if (!deleteTarget || deletingId) return
+  const handleDownload = (key: string) => {
+    downloadMutation.mutate(key)
+  }
 
-    const doc = deleteTarget
-    console.log(`[dashboard:handleDeleteDocument] Deleting documentId=${doc.id}`)
-    setDeletingId(doc.id)
-    try {
-      const token = localStorage.getItem("token")
-      await axios.delete(`${API_BASE_DOWNLOAD}/${doc.id}`, {
-        headers: { Authorization: "Bearer " + token },
-      })
-      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
-      setSearchResults((prev) => prev.filter((d) => d.id !== doc.id))
-      console.log(`[dashboard:handleDeleteDocument] Deleted documentId=${doc.id}`)
-    } catch (e) {
-      console.error(`[dashboard:handleDeleteDocument] Error:`, e)
-      setDocsError(
-        axios.isAxiosError(e)
-          ? (e.response?.data?.message as string) || e.message
-          : "Failed to delete document"
-      )
-    } finally {
-      setDeletingId(null)
-      setDeleteTarget(null)
-    }
+  const confirmDeleteDocument = () => {
+    if (!deleteTarget || deleteMutation.isPending) return
+    deleteMutation.mutate(deleteTarget.id)
+  }
+
+  const fetchDocuments = () => {
+    void documentsQuery.refetch()
   }
 
   const isPdf =
@@ -1113,7 +1008,7 @@ export default function Dashboard() {
                 className="memory-glow space-y-5 rounded-2xl border border-border/80 bg-card/80 p-5 sm:p-6"
                 onSubmit={(e) => {
                   e.preventDefault()
-                  void runSearch(0, false)
+                  runSearch()
                 }}
               >
                 <div className="relative">
@@ -1124,7 +1019,7 @@ export default function Dashboard() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="pics from my trip to paris…"
                     className="h-14 border-input bg-background/70 pl-12 pr-4 text-base shadow-none sm:text-lg"
-                    disabled={searchLoading}
+                    disabled={searchInitialLoading}
                     autoFocus
                   />
                 </div>
@@ -1142,14 +1037,14 @@ export default function Dashboard() {
                         <button
                           key={m.value || "any"}
                           type="button"
-                          disabled={searchLoading}
+                          disabled={searchInitialLoading}
                           onClick={() => setSearchModality(m.value)}
                           className={cn(
                             "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-all",
                             active
                               ? "border-primary bg-primary text-primary-foreground shadow-sm"
                               : "border-border/80 bg-background/50 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
-                            searchLoading && "opacity-60"
+                            searchInitialLoading && "opacity-60"
                           )}
                           aria-pressed={active}
                         >
@@ -1162,10 +1057,10 @@ export default function Dashboard() {
 
                   <Button
                     type="submit"
-                    disabled={!searchQuery.trim() || searchLoading}
+                    disabled={!searchQuery.trim() || searchInitialLoading}
                     className="h-11 shrink-0 px-6 text-base font-semibold sm:min-w-[8.5rem]"
                   >
-                    {searchLoading ? (
+                    {searchInitialLoading ? (
                       <>
                         <Loader2 className="size-4 animate-spin" />
                         Searching…
@@ -1180,7 +1075,7 @@ export default function Dashboard() {
                 </div>
               </form>
 
-              {searchLoading && (
+              {searchInitialLoading && (
                 <div className="flex flex-col items-center gap-3 py-10 text-center">
                   <Loader2 className="size-6 animate-spin text-muted-foreground" />
                   <div>
@@ -1193,7 +1088,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {!searchLoading && searchError && (
+              {!searchInitialLoading && searchError && (
                 <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-center">
                   <p className="text-sm font-medium text-destructive">
                     {searchError}
@@ -1201,7 +1096,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {!searchLoading && !hasSearched && (
+              {!searchInitialLoading && !hasSearched && (
                 <div className="rounded-2xl border border-dashed border-border/80 bg-card/30 px-6 py-14 text-center">
                   <span className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl border border-border/80 bg-background">
                     <Sparkles className="size-5 text-muted-foreground" />
@@ -1234,7 +1129,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {!searchLoading &&
+              {!searchInitialLoading &&
                 hasSearched &&
                 !searchError &&
                 searchResults.length === 0 && (
@@ -1249,7 +1144,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-              {!searchLoading && searchResults.length > 0 && (
+              {!searchInitialLoading && searchResults.length > 0 && (
                 <div className="space-y-4">
                   <div className="flex items-baseline justify-between gap-3">
                     <p className="text-sm text-muted-foreground">
