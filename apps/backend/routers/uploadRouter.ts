@@ -4,25 +4,12 @@ import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { prismaClient } from "@repo/prisma/client"
 import { xAddToStream } from "@repo/redis-stream/client"
+import { keyPrefix, modalityFromMime, normalizeTags } from "../services/uploadService.ts"
 
 const uploadRouter = Router();
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME
 const FILES_STREAM = process.env.FILES_STREAM ?? "files_stream";
-
-function keyPrefix(mimeType: string): string {
-    if (mimeType.startsWith("image/")) return "image";
-    if (mimeType.startsWith("audio/")) return "audio";
-    if (mimeType.startsWith("video/")) return "video";
-    return "pdf";
-}
-
-function modalityFromMime(mimeType: string): string {
-    if (mimeType.startsWith("image/")) return "image";
-    if (mimeType.startsWith("audio/")) return "audio";
-    if (mimeType.startsWith("video/")) return "video";
-    return "pdf";
-}
 
 uploadRouter.post("/post-file-url", async (req, res) => {
     const userId = req.userId;
@@ -58,27 +45,6 @@ uploadRouter.post("/post-file-url", async (req, res) => {
 
     res.status(200).json({ presignedUrl, key });
 });
-
-
-/** Normalize free-form upload tags: trim, drop empty, dedupe case-insensitively. */
-function normalizeTags(raw: unknown): string[] {
-    if (!Array.isArray(raw)) return [];
-    const maxTags = 20;
-    const maxLen = 40;
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of raw) {
-        if (typeof item !== "string") continue;
-        const tag = item.trim().slice(0, maxLen);
-        if (!tag) continue;
-        const key = tag.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(tag);
-        if (out.length >= maxTags) break;
-    }
-    return out;
-}
 
 uploadRouter.post("/confirm", async (req, res) => {
     const { fileName, key, size, contentType, tags: rawTags } = req.body;

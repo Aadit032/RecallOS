@@ -1,0 +1,234 @@
+import { type Response } from "express";
+import { prismaClient } from "@repo/prisma/client";
+import { openrouterClient } from "@repo/openrouter/client";
+import type { JsonValue } from "../../../packages/db/generated/prisma/internal/prismaNamespace";
+import {
+    withGeneration,
+    truncateForTrace,
+    type OpenRouterUsageLike,
+} from "@repo/langfuse/client";
+
+const CHAT_MODEL = process.env.CHAT_MODEL ?? process.env.CONTEXT_MODEL ?? "openai/gpt-4o-mini";
+
+export interface Message {
+    id: string;
+    role: string;
+    content: string;
+    sourceChunks: JsonValue;
+    createdAt: Date;
+}
+
+export async function buildSystemPrompt(
+    userId: string,
+    chatId: string,
+    contextChunks: { text: string; id: string }[],
+    projectSystemPrompt?: string | null,
+    userAgent?: string | null
+): Promise<string> {
+    console.log(`[buildSystemPrompt] Building prompt with ${contextChunks.length} context chunks`);
+    const context = contextChunks
+        .map((c, i) => `[${i + 1}] (id: ${c.id})\n${c.text}`)
+        .join("\n\n---\n\n");
+
+    const totalChars = context.length;
+    console.log(`[buildSystemPrompt] Context length: ${totalChars} characters`);
+
+    const projectBlock =
+        projectSystemPrompt && projectSystemPrompt.trim().length > 0
+            ? `\n\nAdditional project instructions:\n${projectSystemPrompt.trim()}\n`
+            : "";
+
+    const deviceBlock =
+        userAgent && userAgent.trim().length > 0
+            ? `\n\nClient device / browser (from User-Agent; use only when relevant to the answer, e.g. OS- or browser-specific guidance):\n${userAgent.trim()}\n`
+            : "";
+
+    const responses = await prismaClient.chat.findMany({
+        where: { userId, id: { not: chatId }, summary: { not: null } },
+        orderBy: { updatedAt: "desc" },
+        take: 3,
+        select: { summary: true },
+    });
+
+    let finalSummary = responses
+        .map((r) => r.summary)
+        .filter((s): s is string => s !== null)
+        .join("\n");
+
+    console.log(`[buildSystemPrompt] finalSummary: ${finalSummary}`);
+
+    return `You are RecallOS, an assistant that answers questions using the user's organizational knowledge base.
+        Use ONLY the context chunks below to answer. If the context is insufficient, say so clearly.
+        Be concise and accurate.
+        
+        Recent conversation summaries: 
+        ${finalSummary || "None"} 
+        
+        ${projectBlock}${deviceBlock}
+
+        Context chunks:
+        ${context || "(No relevant chunks found.)"}`;
+}
+
+export function titleFromMessage(message: string): string {
+    const trimmed = message.trim().replace(/\s+/g, " ");
+    const title = trimmed.length <= 48 ? trimmed : `${trimmed.slice(0, 48)}…`;
+    console.log(`[titleFromMessage] Generated title: "${title}"`);
+    return title;
+}
+
+export async function summarizeChat(
+    currentSummary: string | null,
+    messages: Message[],
+    isFirst: boolean
+): Promise<string> {
+    let chatHistory: string = "";
+    for (const m of messages) {
+        chatHistory += `role: ${m.role}\n` + `\ncontent: ${m.content}\n\n`;
+    }
+
+    const summaryModel = CHAT_MODEL;
+
+    const summaryPrompt = isFirst
+        ? `You are summarizing a conversation for future AI context.
+        Your goal is to produce a concise summary that helps another AI continue the conversation without reading the full transcript.
+
+        Include only information that is likely to matter in future conversations:
+        - The user's goals, plans, and ongoing projects.
+        - Important decisions that were made.
+        - Important facts the user shared during this conversation.
+        - Constraints, requirements, and preferences relevant to this chat.
+        - Any unresolved questions, TODOs, or next steps.
+
+        Do NOT include:
+        - Greetings or small talk.
+        - Repeated questions or repeated explanations.
+        - Intermediate brainstorming that was later discarded.
+        - Details that are obvious from the final conclusions.
+
+        Keep the summary factual and objective.
+        Do not invent information or make assumptions.
+        Write in third person.
+        Prefer short paragraphs or bullet points.
+        Maximum 300 words.
+
+        Conversation:
+        ${chatHistory}
+    `
+        : `Summarize this section of a larger conversation.
+        Capture only information that should survive into the final conversation summary.
+        
+        Focus on:
+        - Decisions made
+        - Important facts
+        - Technical designs
+        - User goals
+        - Open questions
+        
+        Avoid repeating information already stated within this section.
+        
+        Maximum 150 words.
+        
+        Conversation chunk:
+        ${chatHistory}
+    `;
+
+    const summary = await withGeneration(
+        isFirst ? "summarize-chat" : "summarize-chat-chunk",
+        {
+            model: summaryModel,
+            input: {
+                isFirst,
+                messageCount: messages.length,
+                promptPreview: truncateForTrace(summaryPrompt, 800),
+            },
+            metadata: { feature: "chat-summary" },
+        },
+        async () => {
+            const response = await openrouterClient.chat.send({
+                chatRequest: {
+                    model: summaryModel,
+                    messages: [{ role: "user", content: summaryPrompt }],
+                },
+            });
+            const content = response.choices[0]?.message.content ?? "";
+            return {
+                output: content,
+                usage: (response as { usage?: OpenRouterUsageLike }).usage,
+            };
+        }
+    );
+
+    if (!isFirst) {
+        const mergePrompt = `The following are summaries of different sections of the same conversation.
+            
+            Merge them into one coherent summary.
+            
+            Requirements:
+            - Remove duplicate information.
+            - Preserve important chronology where useful.
+            - Keep only durable information.
+            - Include final decisions rather than intermediate alternatives.
+            - Include unresolved tasks or follow-ups.
+            - Do not invent new information.
+            
+            Return only the final summary.
+            Maximum 300 words.
+            
+            previous summary:
+            ${currentSummary}
+
+            latest summary:
+            ${summary}
+        `;
+
+        return withGeneration(
+            "merge-chat-summary",
+            {
+                model: summaryModel,
+                input: {
+                    previousSummary: truncateForTrace(currentSummary ?? "", 500),
+                    latestSummary: truncateForTrace(summary, 500),
+                },
+                metadata: { feature: "chat-summary" },
+            },
+            async () => {
+                const mergedSummary = await openrouterClient.chat.send({
+                    chatRequest: {
+                        model: summaryModel,
+                        messages: [{ role: "user", content: mergePrompt }],
+                    },
+                });
+                const content = mergedSummary.choices[0]?.message.content ?? "";
+                return {
+                    output: content,
+                    usage: (mergedSummary as { usage?: OpenRouterUsageLike }).usage,
+                };
+            }
+        );
+    }
+
+    return summary;
+}
+
+export function isWebSearchCommand(message: string): boolean {
+    return /^\/web(\s|$)/i.test(message.trimStart());
+}
+
+export function stripWebPrefix(message: string): string {
+    return message.replace(/^\/web\s*/i, "").trim();
+}
+
+export function beginSse(res: import("express").Response) {
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+}
+
+export function writeSse(res: Response, payload: Record<string, unknown>) {
+    if (res.writableEnded) return;
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}

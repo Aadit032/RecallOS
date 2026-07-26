@@ -1,56 +1,12 @@
 import { Router } from "express";
 import { prismaClient } from "@repo/prisma/client";
-import { hybridRetrieve, type RetrievedChunk } from "../services/hybridRetrieve.ts";
+import { hybridRetrieve } from "../services/hybridRetrieve.ts";
+import { aggregateByDocument } from "../services/searchService.ts";
 import { searchSchema } from "../types.ts";
 
 const searchRouter = Router();
 
 const SEARCH_CHUNK_LIMIT = 150;
-const SNIPPET_MAX = 320;
-
-/** Strip the cheap metadata header so the UI shows content, not "Document: …". */
-function snippetFromChunk(text: string): string {
-    let body = text;
-    const sep = "\n---\n";
-    const idx = text.indexOf(sep);
-    if (idx !== -1 && text.startsWith("Document:")) {
-        body = text.slice(idx + sep.length);
-    }
-    const collapsed = body.replace(/\s+/g, " ").trim();
-    if (collapsed.length <= SNIPPET_MAX) return collapsed;
-    return `${collapsed.slice(0, SNIPPET_MAX)}…`;
-}
-
-type AggregatedDoc = {
-    documentId: string;
-    score: number;
-    snippet: string | null;
-    bestChunk: RetrievedChunk;
-};
-
-/**
- * Group hybrid chunks by documentId, keep max score + best snippet.
- */
-function aggregateByDocument(chunks: RetrievedChunk[]): AggregatedDoc[] {
-    const map = new Map<string, AggregatedDoc>();
-
-    for (const chunk of chunks) {
-        const documentId = chunk.documentId == null ? null : String(chunk.documentId);
-        if (!documentId) continue;
-
-        const existing = map.get(documentId);
-        if (!existing || chunk.score > existing.score) {
-            map.set(documentId, {
-                documentId,
-                score: chunk.score,
-                snippet: snippetFromChunk(chunk.text) || null,
-                bestChunk: chunk,
-            });
-        }
-    }
-
-    return Array.from(map.values()).sort((a, b) => b.score - a.score);
-}
 
 /**
  * POST /api/v1/search
