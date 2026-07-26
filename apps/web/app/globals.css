@@ -54,38 +54,37 @@
   font-weight: 450;
 }
 
-/* Cool archive paper + cobalt recall — not cream/terracotta SaaS defaults */
+/* Cool archive paper + cobalt recall — original surfaces, darker ink only */
 :root {
   --radius: 0.5rem;
-  /* Paper #E9EEF5, Ink #0B1424, Cobalt #2B5FE8, Citation #C9892E, Mist #6B7C94 */
+  /* Paper #E9EEF5 surfaces unchanged; ink blacks darkened for readability */
   --background: oklch(0.955 0.012 250);
-  --foreground: oklch(0.2 0.035 255);
+  --foreground: oklch(0.12 0.04 255);
   --card: oklch(0.985 0.006 250);
-  --card-foreground: oklch(0.2 0.035 255);
+  --card-foreground: oklch(0.12 0.04 255);
   --popover: oklch(0.985 0.006 250);
-  --popover-foreground: oklch(0.2 0.035 255);
-  --primary: oklch(0.22 0 0);
+  --popover-foreground: oklch(0.12 0.04 255);
+  --primary: oklch(0.14 0 0);
   --primary-foreground: oklch(0.97 0 0);
   --secondary: oklch(0.91 0.015 250);
-  --secondary-foreground: oklch(0.26 0.04 255);
+  --secondary-foreground: oklch(0.16 0.04 255);
   --muted: oklch(0.91 0.012 250);
-  /* Darker mist gray so secondary labels/placeholders stay readable on paper */
-  --muted-foreground: oklch(0.38 0.03 255);
+  --muted-foreground: oklch(0.28 0.035 255);
   --accent: oklch(0.91 0.02 250);
-  --accent-foreground: oklch(0.26 0.04 255);
+  --accent-foreground: oklch(0.16 0.04 255);
   --destructive: oklch(0.55 0.2 25);
   --border: oklch(0.82 0.02 250);
   --input: oklch(0.82 0.02 250);
   --ring: oklch(0.52 0 0);
   --citation: oklch(0.7 0.12 70);
-  --citation-foreground: oklch(0.28 0.05 70);
-  --signal: oklch(0.22 0 0);
+  --citation-foreground: oklch(0.22 0.05 70);
+  --signal: oklch(0.14 0 0);
   --sidebar: oklch(0.93 0.014 250);
-  --sidebar-foreground: oklch(0.26 0.035 255);
-  --sidebar-primary: oklch(0.22 0 0);
+  --sidebar-foreground: oklch(0.16 0.04 255);
+  --sidebar-primary: oklch(0.14 0 0);
   --sidebar-primary-foreground: oklch(0.97 0 0);
   --sidebar-accent: oklch(0.88 0.02 250);
-  --sidebar-accent-foreground: oklch(0.2 0.04 255);
+  --sidebar-accent-foreground: oklch(0.12 0.04 255);
   --sidebar-border: oklch(0.8 0.022 250);
   --sidebar-ring: oklch(0.52 0 0);
 }

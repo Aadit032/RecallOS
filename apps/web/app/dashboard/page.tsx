@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { getErrorMessage } from "@/lib/api"
 import {
   deleteDocument,
@@ -194,6 +195,75 @@ const TABS: {
   },
 ]
 
+function DocumentRowSkeleton() {
+  return (
+    <li className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <div className="flex min-w-0 items-start gap-3">
+        <Skeleton className="mt-0.5 size-10 shrink-0 rounded-xl" />
+        <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+          <Skeleton className="h-4 w-48 max-w-full" />
+          <Skeleton className="h-3.5 w-32 max-w-[70%]" />
+          <div className="flex gap-1.5 pt-0.5">
+            <Skeleton className="h-5 w-14 rounded-full" />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2 sm:pl-4">
+        <Skeleton className="h-6 w-16 rounded-full" />
+        <Skeleton className="h-8 w-[5.5rem] rounded-md" />
+        <Skeleton className="h-8 w-[4.5rem] rounded-md" />
+      </div>
+    </li>
+  )
+}
+
+function DocumentListSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <ul className="space-y-2.5" aria-busy="true" aria-label="Loading documents">
+      {Array.from({ length: count }, (_, i) => (
+        <DocumentRowSkeleton key={i} />
+      ))}
+    </ul>
+  )
+}
+
+function SearchResultSkeleton() {
+  return (
+    <li className="overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+        <div className="flex min-w-0 flex-1 items-start gap-3.5">
+          <Skeleton className="mt-0.5 size-11 shrink-0 rounded-xl" />
+          <div className="min-w-0 flex-1 space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton className="h-4 w-40 max-w-[60%]" />
+              <Skeleton className="h-5 w-12 rounded-full" />
+            </div>
+            <Skeleton className="h-3.5 w-full max-w-md" />
+            <Skeleton className="h-3.5 w-3/4 max-w-sm" />
+            <div className="flex gap-1.5 pt-0.5">
+              <Skeleton className="h-5 w-14 rounded-full" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+            <Skeleton className="mt-1 h-1.5 w-28 rounded-full" />
+          </div>
+        </div>
+        <Skeleton className="h-8 w-[5.5rem] shrink-0 rounded-md" />
+      </div>
+    </li>
+  )
+}
+
+function SearchListSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <ul className="space-y-3" aria-busy="true" aria-label="Searching documents">
+      {Array.from({ length: count }, (_, i) => (
+        <SearchResultSkeleton key={i} />
+      ))}
+    </ul>
+  )
+}
+
 export default function Dashboard() {
   const router = useRouter()
   const queryClient = useQueryClient()
@@ -220,13 +290,43 @@ export default function Dashboard() {
     queryFn: ({ pageParam }) => fetchDocumentsPage(pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    // Always consider docs stale so uploads / pipeline status show up promptly
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    // Auto-poll while any document is still processing (no manual refresh needed)
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages
+      if (!pages?.length) return false
+      const busy = pages.some((page) =>
+        page.documents.some(
+          (d) => d.status !== "READY" && d.status !== "FAILED"
+        )
+      )
+      return busy ? 2_500 : false
+    },
+    refetchIntervalInBackground: false,
   })
 
   const documents = useMemo(
     () => documentsQuery.data?.pages.flatMap((p) => p.documents) ?? [],
     [documentsQuery.data]
   )
+
+  const hasProcessingDocs = useMemo(
+    () =>
+      documents.some(
+        (d) => d.status !== "READY" && d.status !== "FAILED"
+      ),
+    [documents]
+  )
+
   const docsLoading = documentsQuery.isLoading
+  /** Background refresh (refresh click, poll, post-upload) while list is already shown */
+  const docsRefreshing =
+    documentsQuery.isFetching &&
+    !documentsQuery.isLoading &&
+    !documentsQuery.isFetchingNextPage
   const docsError = documentsQuery.isError
     ? "Could not load documents. Sign in and try again."
     : ""
@@ -257,7 +357,6 @@ export default function Dashboard() {
     () => searchQueryResult.data?.pages.flatMap((p) => p.documents) ?? [],
     [searchQueryResult.data]
   )
-  const searchLoading = searchQueryResult.isLoading || searchQueryResult.isFetching
   const searchLoadingMore = searchQueryResult.isFetchingNextPage
   const searchError = searchQueryResult.isError
     ? getErrorMessage(searchQueryResult.error, "Search failed")
@@ -281,12 +380,18 @@ export default function Dashboard() {
       file: File
       tags: string[]
     }) => uploadDocument(file, tags, setStatus),
-    onSuccess: () => {
+    onSuccess: async () => {
       setFile(null)
       setUploadTags([])
       setTagDraft("")
       setStatus("Upload complete.")
-      void queryClient.invalidateQueries({ queryKey: queryKeys.documents.all })
+      // Force an immediate list refresh so the new doc appears without manual refresh
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.documents.all,
+      })
+      await queryClient.refetchQueries({
+        queryKey: queryKeys.documents.list(),
+      })
     },
     onError: () => {
       setStatus("Upload failed.")
@@ -300,13 +405,31 @@ export default function Dashboard() {
       window.open(url, "_blank")
     },
   })
+  const downloadingKey = downloadMutation.isPending
+    ? (downloadMutation.variables ?? null)
+    : null
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteDocument(id),
-    onSuccess: (_data, id) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.documents.all })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.search.all })
-      // Optimistically drop from search cache pages if present
+    onSuccess: async (_data, id) => {
+      // Drop from list cache immediately
+      queryClient.setQueriesData(
+        { queryKey: queryKeys.documents.list() },
+        (old: unknown) => {
+          if (!old || typeof old !== "object" || !("pages" in old)) return old
+          const data = old as {
+            pages: { documents: DocumentItem[]; nextCursor: string | null }[]
+            pageParams: unknown[]
+          }
+          return {
+            ...data,
+            pages: data.pages.map((page) => ({
+              ...page,
+              documents: page.documents.filter((d) => d.id !== id),
+            })),
+          }
+        }
+      )
       queryClient.setQueriesData(
         { queryKey: queryKeys.search.all },
         (old: unknown) => {
@@ -325,6 +448,10 @@ export default function Dashboard() {
         }
       )
       setDeleteTarget(null)
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.documents.all,
+      })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.search.all })
     },
     onError: (e) => {
       setDeleteTarget(null)
@@ -418,8 +545,8 @@ export default function Dashboard() {
     deleteMutation.mutate(deleteTarget.id)
   }
 
-  const fetchDocuments = () => {
-    void documentsQuery.refetch()
+  const fetchDocuments = async () => {
+    await documentsQuery.refetch({ cancelRefetch: false })
   }
 
   const isPdf =
@@ -492,6 +619,15 @@ export default function Dashboard() {
                 {readyCount}
               </span>
               ready
+              {hasProcessingDocs && (
+                <>
+                  <span className="text-border">·</span>
+                  <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400">
+                    <Loader2 className="size-3 animate-spin" />
+                    indexing
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -837,20 +973,28 @@ export default function Dashboard() {
                   variant="outline"
                   size="sm"
                   onClick={() => void fetchDocuments()}
-                  disabled={docsLoading}
+                  disabled={docsLoading || docsRefreshing}
                   className="border-border/90 bg-card/60"
+                  aria-busy={docsLoading || docsRefreshing}
                 >
                   <RefreshCw
-                    className={cn("size-3.5", docsLoading && "animate-spin")}
+                    className={cn(
+                      "size-3.5",
+                      (docsLoading || docsRefreshing) && "animate-spin"
+                    )}
                   />
-                  Refresh
+                  {docsLoading || docsRefreshing ? "Refreshing…" : "Refresh"}
                 </Button>
               </div>
 
-              {docsLoading && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading documents…
+              {docsLoading && <DocumentListSkeleton count={4} />}
+
+              {!docsLoading && docsRefreshing && (
+                <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-foreground">
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  {hasProcessingDocs
+                    ? "Updating document status…"
+                    : "Refreshing library…"}
                 </div>
               )}
 
@@ -874,9 +1018,16 @@ export default function Dashboard() {
 
               {!docsLoading && documents.length > 0 && (
                 <>
-                  <ul className="space-y-2.5">
+                  <ul
+                    className={cn(
+                      "space-y-2.5 transition-opacity duration-200",
+                      docsRefreshing && "opacity-60"
+                    )}
+                  >
                     {documents.map((doc) => {
                       const Icon = modalityIcon(doc.modality)
+                      const isProcessing =
+                        doc.status !== "READY" && doc.status !== "FAILED"
                       return (
                         <li
                           key={doc.id}
@@ -885,8 +1036,7 @@ export default function Dashboard() {
                             "hover:border-border hover:bg-card/90",
                             doc.status === "READY" &&
                               "border-l-[3px] border-l-emerald-500/50",
-                            (doc.status === "PARSING" ||
-                              doc.status === "EMBEDDING") &&
+                            isProcessing &&
                               "border-l-[3px] border-l-muted-foreground/35",
                             doc.status === "FAILED" &&
                               "border-l-[3px] border-l-red-500/50 bg-red-500/[0.04]",
@@ -932,16 +1082,29 @@ export default function Dashboard() {
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2 sm:pl-4">
-                            <Badge variant={statusVariant(doc.status)}>
+                            <Badge
+                              variant={statusVariant(doc.status)}
+                              className="gap-1"
+                            >
+                              {isProcessing && (
+                                <Loader2 className="size-3 animate-spin" />
+                              )}
                               {statusLabel(doc.status)}
                             </Badge>
                             <Button
                               variant="outline"
                               size="sm"
+                              disabled={downloadingKey === doc.ObjectKey}
                               onClick={() => void handleDownload(doc.ObjectKey)}
                             >
-                              <Download className="size-3.5" />
-                              Download
+                              {downloadingKey === doc.ObjectKey ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <Download className="size-3.5" />
+                              )}
+                              {downloadingKey === doc.ObjectKey
+                                ? "Opening…"
+                                : "Download"}
                             </Button>
                             <Button
                               variant="outline"
@@ -955,27 +1118,28 @@ export default function Dashboard() {
                               ) : (
                                 <Trash2 className="size-3.5" />
                               )}
-                              Delete
+                              {deletingId === doc.id ? "Deleting…" : "Delete"}
                             </Button>
                           </div>
                         </li>
                       )
                     })}
                   </ul>
-                  {nextCursor && (
+                  {loadingMore && (
+                    <div className="space-y-2.5 pt-1">
+                      <DocumentRowSkeleton />
+                      <DocumentRowSkeleton />
+                    </div>
+                  )}
+                  {nextCursor && !loadingMore && (
                     <div className="flex justify-center pt-2">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={loadMore}
-                        disabled={loadingMore}
                         className="gap-1.5 text-muted-foreground hover:text-foreground"
                       >
-                        {loadingMore ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <ChevronDown className="size-3.5" />
-                        )}
+                        <ChevronDown className="size-3.5" />
                         Load more
                       </Button>
                     </div>
@@ -1076,15 +1240,15 @@ export default function Dashboard() {
               </form>
 
               {searchInitialLoading && (
-                <div className="flex flex-col items-center gap-3 py-10 text-center">
-                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">Running hybrid retrieval</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Dense · sparse · RRF fusion
-                      {searchModality ? ` · ${searchModality} only` : ""}
-                    </p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>
+                      Running hybrid retrieval
+                      {searchModality ? ` · ${searchModality}` : ""}
+                    </span>
                   </div>
+                  <SearchListSkeleton count={3} />
                 </div>
               )}
 
@@ -1237,10 +1401,17 @@ export default function Dashboard() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                disabled={downloadingKey === doc.ObjectKey}
                                 onClick={() => void handleDownload(doc.ObjectKey)}
                               >
-                                <Download className="size-3.5" />
-                                Download
+                                {downloadingKey === doc.ObjectKey ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : (
+                                  <Download className="size-3.5" />
+                                )}
+                                {downloadingKey === doc.ObjectKey
+                                  ? "Opening…"
+                                  : "Download"}
                               </Button>
                             </div>
                           </div>
@@ -1249,20 +1420,21 @@ export default function Dashboard() {
                     })}
                   </ul>
 
-                  {searchHasMore && (
+                  {searchLoadingMore && (
+                    <div className="space-y-3 pt-1">
+                      <SearchResultSkeleton />
+                      <SearchResultSkeleton />
+                    </div>
+                  )}
+                  {searchHasMore && !searchLoadingMore && (
                     <div className="flex justify-center pt-2">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={loadMoreSearch}
-                        disabled={searchLoadingMore}
                         className="gap-1.5 text-muted-foreground hover:text-foreground"
                       >
-                        {searchLoadingMore ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <ChevronDown className="size-3.5" />
-                        )}
+                        <ChevronDown className="size-3.5" />
                         Load more
                       </Button>
                     </div>
