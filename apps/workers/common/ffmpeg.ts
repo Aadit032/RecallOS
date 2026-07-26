@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { getFfmpegBin, getFfprobeBin } from "./ensureMediaTools.ts";
 
 const SCENE_THRESHOLD = Number(process.env.SCENE_THRESHOLD ?? "0.35");
 /** Split scenes longer than this into fixed windows (seconds). */
@@ -33,7 +34,7 @@ async function runCmd(
 /** Media duration in seconds via ffprobe. */
 export async function getDurationSeconds(mediaPath: string): Promise<number> {
     const { stdout } = await runCmd([
-        "ffprobe",
+        getFfprobeBin(),
         "-v",
         "error",
         "-show_entries",
@@ -51,7 +52,7 @@ export async function getDurationSeconds(mediaPath: string): Promise<number> {
 export async function hasAudioStream(mediaPath: string): Promise<boolean> {
     const { stdout, code } = await runCmd(
         [
-            "ffprobe",
+            getFfprobeBin(),
             "-v",
             "error",
             "-select_streams",
@@ -79,7 +80,7 @@ export async function detectScenes(
 
     const { stderr } = await runCmd(
         [
-            "ffmpeg",
+            getFfmpegBin(),
             "-hide_banner",
             "-i",
             videoPath,
@@ -156,7 +157,7 @@ export async function extractKeyframe(
     const mid = Math.max(0, (start + end) / 2);
     // Seek after -ss for accurate decode near cuts; -ss before -i is faster but less precise
     await runCmd([
-        "ffmpeg",
+        getFfmpegBin(),
         "-hide_banner",
         "-y",
         "-ss",
@@ -186,7 +187,7 @@ export async function extractAudioClip(
 
     const outPath = path.join(outDir, `clip-${start.toFixed(2)}-${end.toFixed(2)}.mp3`);
     await runCmd([
-        "ffmpeg",
+        getFfmpegBin(),
         "-hide_banner",
         "-y",
         "-ss",

@@ -5,6 +5,7 @@ import { xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-st
 import { prismaClient } from "@repo/prisma/client";
 import { downloadToDisk } from "../common/download.ts";
 import { detectScenes } from "../common/ffmpeg.ts";
+import { ensureMediaTools } from "../common/ensureMediaTools.ts";
 import { cleanupTemp, extFromKey, makeTempDir } from "../common/temp.ts";
 import path from "path";
 
@@ -77,6 +78,7 @@ export async function processVideo(docId: string) {
 }
 
 export async function videoWorkerLoop() {
+    await ensureMediaTools();
     console.log(`[video-worker] Started — listening on "${VIDEO_STREAM}"`);
     while (true) {
         const msg = await xReadGroupFromStream(VIDEO_STREAM, VIDEO_GROUP, WORKER_ID, 1, 5000);

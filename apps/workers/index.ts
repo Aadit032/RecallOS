@@ -12,6 +12,7 @@ import { dlqLoop } from "./dlq/index.ts";
 import { prismaClient } from "@repo/prisma/client";
 import { xAddToStream } from "@repo/redis-stream/client";
 import { startClaimLoop } from "./common/claimStaleJobs.ts";
+import { ensureMediaTools } from "./common/ensureMediaTools.ts";
 dotenv.config();
 
 initTracing({ serviceName: "recall-os-workers" });
@@ -44,6 +45,10 @@ const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
 async function main() {
+    // Video/scene workers need ffmpeg + ffprobe on PATH
+    console.log("[runner] Checking media tools (ffmpeg / ffprobe)…");
+    await ensureMediaTools();
+
     console.log("[runner] Ensuring all streams exist...");
     await ensureAllStreams();
 
@@ -152,4 +157,9 @@ async function main() {
     ]);
 }
 
-await main();
+try {
+    await main();
+} catch (e) {
+    console.error("[runner] Fatal startup error:", e);
+    process.exit(1);
+}

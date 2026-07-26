@@ -5,6 +5,7 @@ import { xReadGroupFromStream, xAckOnStream, xAddToStream } from "@repo/redis-st
 import { prismaClient } from "@repo/prisma/client";
 import { downloadToDisk } from "../common/download.ts";
 import { extractAudioClip, extractKeyframe } from "../common/ffmpeg.ts";
+import { ensureMediaTools } from "../common/ensureMediaTools.ts";
 import { cleanupTemp, extFromKey, fileToDataUrl, makeTempDir } from "../common/temp.ts";
 import { transcribeAudioFile } from "../common/transcribe.ts";
 import { describeImage } from "../common/vision.ts";
@@ -131,6 +132,7 @@ export async function processScene(
 }
 
 export async function sceneWorkerLoop() {
+    await ensureMediaTools();
     console.log(`[scene-worker] Started — listening on "${SCENE_STREAM}"`);
     while (true) {
         const msg = await xReadGroupFromStream(SCENE_STREAM, SCENE_GROUP, WORKER_ID, 1, 5000);
