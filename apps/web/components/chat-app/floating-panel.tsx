@@ -42,9 +42,9 @@ export function FloatingPanel({
    return (
       <div
          ref={ref}
-         className="animate-panel-in fixed top-14 left-[calc(var(--sidebar-width-icon)+0.5rem)] z-[200] flex max-h-[min(22rem,calc(100svh-5rem))] w-56 flex-col overflow-hidden rounded-xl border border-zinc-300 bg-zinc-200 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+         className="animate-panel-in fixed top-14 left-[calc(var(--sidebar-width-icon)+0.5rem)] z-[200] flex max-h-[min(22rem,calc(100svh-5rem))] w-56 flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl shadow-black/60"
       >
-         <div className="flex shrink-0 items-center justify-between border-b border-zinc-300/80 px-2.5 py-2 dark:border-zinc-700/80">
+         <div className="flex shrink-0 items-center justify-between border-b border-border px-2.5 py-2">
             <div className="flex items-center gap-1.5">
                <span className="text-xs font-medium">{title}</span>
                {typeof count === "number" && (

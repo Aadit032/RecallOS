@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation"
 import { useMutation } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -53,7 +52,6 @@ export default function Signin() {
               RecallOS
             </span>
           </Link>
-          <ThemeToggle />
         </div>
       </header>
 

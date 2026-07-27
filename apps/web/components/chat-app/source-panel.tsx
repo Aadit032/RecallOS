@@ -14,7 +14,14 @@ export function SourcePanel({
    if (!chunks || chunks.length === 0) return null
 
    return (
-      <div className="fixed inset-y-3 right-3 z-[200] flex w-[min(20rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border/50 bg-background/90 shadow-xl backdrop-blur-md">
+      <>
+         <button
+            type="button"
+            aria-label="Close sources"
+            className="fixed inset-0 z-[190] cursor-default"
+            onClick={onClose}
+         />
+         <div className="fixed inset-y-3 right-3 z-[200] flex w-[min(20rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border/50 bg-background/90 shadow-xl backdrop-blur-md">
          <div className="flex shrink-0 items-center justify-between px-4 py-3">
             <div className="flex items-center gap-2">
                <BookOpen className="size-3.5 text-muted-foreground" />
@@ -87,6 +94,7 @@ export function SourcePanel({
                )
             })}
          </div>
-      </div>
+         </div>
+      </>
    )
 }

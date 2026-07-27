@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { Folder, Pin } from "lucide-react"
 
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
@@ -73,7 +72,6 @@ function ChatLayout() {
                {chat.active?.projectName && (
                   <Badge variant="outline" className="hidden gap-1 sm:inline-flex"><Folder className="size-3" />{chat.active.projectName}</Badge>
                )}
-               <ThemeToggle />
                <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex"><Link href="/dashboard">Dashboard</Link></Button>
             </header>
 

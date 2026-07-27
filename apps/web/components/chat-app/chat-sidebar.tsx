@@ -465,7 +465,7 @@ export function ChatSidebar({
                                           else next.add(project.id)
                                           return next
                                        })}
-                                       className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70"
+                                       className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
                                     >
                                        {expanded ? <ChevronDown className="size-3 shrink-0 opacity-70" /> : <ChevronRight className="size-3 shrink-0 opacity-70" />}
                                        <Folder className="size-3 shrink-0 opacity-70" />
@@ -482,7 +482,7 @@ export function ChatSidebar({
                                     </button>
                                  </div>
                                  {expanded && (
-                                    <div className="ml-4 space-y-0.5 border-l border-zinc-400/40 pl-2 dark:border-zinc-600/50">
+                                    <div className="ml-4 space-y-0.5 border-l border-border pl-2">
                                        {projectChats.length === 0 ? (
                                           <p className="px-2 py-1.5 text-[11px] text-muted-foreground">No chats</p>
                                        ) : (
@@ -492,8 +492,8 @@ export function ChatSidebar({
                                                 type="button"
                                                 onClick={() => selectChat(chat.id)}
                                                 className={cn(
-                                                   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70",
-                                                   chat.id === active?.id && "bg-zinc-300/90 font-medium dark:bg-zinc-700/90"
+                                                   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
+                                                   chat.id === active?.id && "bg-accent font-medium"
                                                 )}
                                              >
                                                 {chat.pinned && <Pin className="size-3 shrink-0 opacity-70" />}
@@ -519,7 +519,7 @@ export function ChatSidebar({
                   <button
                      type="button"
                      onClick={() => { createChat(); setOpenPanel(null) }}
-                     className="mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70"
+                     className="mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium transition-colors hover:bg-accent"
                   >
                      <SquarePen className="size-3 shrink-0" />
                      New chat
@@ -538,8 +538,8 @@ export function ChatSidebar({
                                  type="button"
                                  onClick={() => selectChat(chat.id)}
                                  className={cn(
-                                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70",
-                                    chat.id === active?.id && "bg-zinc-300/90 font-medium dark:bg-zinc-700/90"
+                                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
+                                    chat.id === active?.id && "bg-accent font-medium"
                                  )}
                               >
                                  <Pin className="size-3 shrink-0 opacity-70" />
@@ -572,8 +572,8 @@ export function ChatSidebar({
                                  type="button"
                                  onClick={() => selectChat(chat.id)}
                                  className={cn(
-                                    "flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70",
-                                    chat.id === active?.id && "bg-zinc-300/90 dark:bg-zinc-700/90"
+                                    "flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
+                                    chat.id === active?.id && "bg-accent"
                                  )}
                               >
                                  <span className={cn("truncate", chat.id === active?.id && "font-medium")}>{chat.title}</span>

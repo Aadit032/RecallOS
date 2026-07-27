@@ -43,8 +43,8 @@ export default function RootLayout({
       <body className="font-sans min-h-screen antialiased">
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
-          enableSystem
+          defaultTheme="dark"
+          enableSystem={false}
           disableTransitionOnChange
         >
           <QueryProvider>

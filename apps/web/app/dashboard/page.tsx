@@ -25,7 +25,6 @@ import {
   X,
 } from "lucide-react"
 
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -568,7 +567,6 @@ export default function Dashboard() {
           </Link>
 
           <nav className="flex items-center gap-1 sm:gap-2">
-            <ThemeToggle />
           </nav>
         </div>
       </header>
