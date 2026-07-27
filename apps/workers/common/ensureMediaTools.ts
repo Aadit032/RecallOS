@@ -1,10 +1,10 @@
 /**
  * Ensure ffmpeg + ffprobe exist before video/scene workers run.
- * If missing, attempt to install the platform package manager's ffmpeg package.
+ * Missing binaries fail the preflight by default; runtime installation requires explicit opt-in.
  *
  * Env:
  *   SKIP_MEDIA_TOOLS_CHECK=1   — skip entirely
- *   SKIP_MEDIA_TOOLS_INSTALL=1 — check only; never install
+ *   ALLOW_MEDIA_TOOLS_INSTALL=1 — opt in to runtime installation (not recommended)
  *   FFMPEG_PATH / FFPROBE_PATH — optional absolute paths to force
  */
 
@@ -333,8 +333,8 @@ async function warnIfMissingLame(): Promise<void> {
 }
 
 /**
- * Check for ffmpeg + ffprobe; install the system package if missing.
- * Throws if tools are still unavailable after install (or install is skipped/disabled).
+ * Check for ffmpeg + ffprobe; optionally install only when explicitly enabled.
+ * Throws when the tools are unavailable and runtime installation is not explicitly enabled.
  */
 export async function ensureMediaTools(): Promise<void> {
     if (process.env.SKIP_MEDIA_TOOLS_CHECK === "1") {
@@ -352,10 +352,10 @@ export async function ensureMediaTools(): Promise<void> {
 
     console.warn(`${LOG} ffmpeg and/or ffprobe missing from PATH`);
 
-    if (process.env.SKIP_MEDIA_TOOLS_INSTALL === "1") {
+    if (process.env.ALLOW_MEDIA_TOOLS_INSTALL !== "1") {
         throw new Error(
             `${LOG} ffmpeg/ffprobe required for video/scene workers. ` +
-                `Install them or unset SKIP_MEDIA_TOOLS_INSTALL to allow auto-install.`
+                `Install them on the host VM/laptop before startup, or set ALLOW_MEDIA_TOOLS_INSTALL=1 to opt into runtime installation.`
         );
     }
 

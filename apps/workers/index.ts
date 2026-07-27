@@ -45,9 +45,16 @@ const IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 const CLAIM_INTERVAL_MS = 30 * 1000;
 
 async function main() {
-    // Video/scene workers need ffmpeg + ffprobe on PATH
-    console.log("[runner] Checking media tools (ffmpeg / ffprobe)…");
-    await ensureMediaTools();
+    // A missing media dependency must not take down unrelated ingestion loops.
+    // Video and scene workers are started only after their own preflight passes.
+    let mediaWorkersAvailable = true;
+    try {
+        await ensureMediaTools();
+    } catch (error) {
+        mediaWorkersAvailable = false;
+        console.error("[runner] Video and scene workers are disabled until ffmpeg and ffprobe are installed:", error
+        );
+    }
 
     console.log("[runner] Ensuring all streams exist...");
     await ensureAllStreams();
@@ -99,33 +106,36 @@ async function main() {
             processFn: async (p) => processAudio(p.docId!),
         }, CLAIM_INTERVAL_MS),
 
-        videoWorkerLoop(),
-        startClaimLoop({
-            stream: VIDEO_STREAM,
-            group: VIDEO_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: 5,
-            processFn: async (p) => processVideo(p.docId!),
-        }, CLAIM_INTERVAL_MS),
-
-        sceneWorkerLoop(),
-        startClaimLoop({
-            stream: SCENE_STREAM,
-            group: SCENE_GROUP,
-            workerId: WORKER_ID,
-            dlqStream: DLQ_STREAM,
-            idleThresholdMs: IDLE_THRESHOLD_MS,
-            maxRetries: 5,
-            processFn: async (p) =>
-                processScene(
-                    p.docId!,
-                    p.sceneIndex ?? "0",
-                    p.timestampStart,
-                    p.timestampEnd
-                ),
-        }, CLAIM_INTERVAL_MS),
+        ...(mediaWorkersAvailable
+            ? [
+                  videoWorkerLoop(),
+                  startClaimLoop({
+                      stream: VIDEO_STREAM,
+                      group: VIDEO_GROUP,
+                      workerId: WORKER_ID,
+                      dlqStream: DLQ_STREAM,
+                      idleThresholdMs: IDLE_THRESHOLD_MS,
+                      maxRetries: 5,
+                      processFn: async (p) => processVideo(p.docId!),
+                  }, CLAIM_INTERVAL_MS),
+                  sceneWorkerLoop(),
+                  startClaimLoop({
+                      stream: SCENE_STREAM,
+                      group: SCENE_GROUP,
+                      workerId: WORKER_ID,
+                      dlqStream: DLQ_STREAM,
+                      idleThresholdMs: IDLE_THRESHOLD_MS,
+                      maxRetries: 5,
+                      processFn: async (p) =>
+                          processScene(
+                              p.docId!,
+                              p.sceneIndex ?? "0",
+                              p.timestampStart,
+                              p.timestampEnd
+                          ),
+                  }, CLAIM_INTERVAL_MS),
+              ]
+            : []),
 
         embedderLoop(),
         startClaimLoop({
