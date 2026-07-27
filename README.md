@@ -25,6 +25,8 @@ Upload documents. Index them. Ask questions with hybrid retrieval and source cit
 
 ## ✨ What is RecallOS?
 
+![recallos](./assets/recallos.png)
+
 A **multimodal memory architecture** for persistent retrieval over heterogeneous enterprise knowledge. Upload PDFs, images, audio, and video — then chat with an AI that cites its sources.
 
 ### 🚀 Core Features
