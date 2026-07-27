@@ -557,7 +557,13 @@ export default function Dashboard() {
   const readyCount = documents.filter((d) => d.status === "READY").length
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="dashboard-stage relative flex min-h-screen flex-col overflow-hidden">
+      <div className="nous-art" aria-hidden>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="nous-art-backdrop" src="/nous-assets/backdrop-figure.webp" alt="" />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="nous-art-hero" src="/nous-assets/hero-figure.webp" alt="" />
+      </div>
       <header className="sticky top-0 z-50 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/dashboard" className="flex items-center gap-2.5 tracking-tight">
@@ -571,7 +577,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6 sm:py-14">
+      <main className="relative z-10 mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6 sm:py-14">
         <div className="archive-grid pointer-events-none absolute inset-x-0 top-0 h-72 opacity-25" />
 
         {/* Hero */}
@@ -587,7 +593,7 @@ export default function Dashboard() {
               {activeTab === "upload" ? (
                 <>
                   Build{" "}
-                  <span className="font-script text-2xl text-foreground">
+                  <span className="font-script text-foreground">
                     searchable memory
                   </span>
                   . Upload files, tag them, and watch the pipeline index
@@ -597,7 +603,7 @@ export default function Dashboard() {
                 <>
                   Ask in plain language — hybrid retrieval finds the right docs
                   across{" "}
-                  <span className="font-script text-2xl text-foreground">
+                  <span className="font-script text-foreground">
                     every modality
                   </span>
                   .

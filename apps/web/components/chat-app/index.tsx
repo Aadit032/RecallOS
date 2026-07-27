@@ -59,8 +59,8 @@ function ChatLayout() {
             onClose={() => chat.setOpenSourceMsgId(null)}
          />
 
-         <SidebarInset className="min-h-0 overflow-hidden">
-            <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border/80 px-3 sm:px-4">
+         <SidebarInset className="min-h-0 overflow-hidden bg-transparent">
+            <header className="relative z-10 flex h-14 shrink-0 items-center gap-2 border-b border-border/80 bg-background/70 px-3 backdrop-blur-md sm:px-4">
                <div className="min-w-0 flex-1">
                   <h1 className="font-display truncate text-base font-medium tracking-tight sm:text-lg">
                      {chat.active?.title ?? "Chat"}
@@ -148,7 +148,13 @@ function ChatLayout() {
 
 export default function ChatPage() {
    return (
-      <SidebarProvider defaultOpen className="h-svh! min-h-0!">
+      <SidebarProvider defaultOpen className="chat-stage h-svh! min-h-0! overflow-hidden">
+         <div className="nous-art" aria-hidden>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="nous-art-backdrop" src="/nous-assets/backdrop-figure.webp" alt="" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="nous-art-hero" src="/nous-assets/hero-figure.webp" alt="" />
+         </div>
          <ChatLayout />
       </SidebarProvider>
    )

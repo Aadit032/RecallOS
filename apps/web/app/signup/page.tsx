@@ -66,7 +66,7 @@ export default function Signup() {
             </h1>
             <p className="mt-2 text-base text-muted-foreground">
               Build{" "}
-              <span className="font-script text-xl text-foreground">
+              <span className="font-script text-foreground">
                 searchable memory
               </span>{" "}
               for your organization.

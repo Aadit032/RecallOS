@@ -48,9 +48,10 @@
 }
 
 @utility font-script {
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  font-style: normal;
-  font-weight: 500;
+  font-family: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-optical-sizing: auto;
+  font-weight: 450;
 }
 
 /* RecallOS uses a single, deliberately black operating surface. */
@@ -194,6 +195,118 @@ button, [role="button"], a[role="button"] {
 .portal-header { background: oklch(0.045 0 0 / 78%); border-color: oklch(1 0 0 / 12%); }
 .portal-wordmark { letter-spacing: -0.065em; }
 .portal-stage { isolation: isolate; overflow: hidden; }
-.portal-stage::before { background-image: linear-gradient(90deg, oklch(1 0 0 / 5%) 1px, transparent 1px), linear-gradient(oklch(1 0 0 / 5%) 1px, transparent 1px); background-size: 80px 80px; content: ""; inset: 0; mask-image: linear-gradient(to bottom, black, transparent 75%); pointer-events: none; position: absolute; z-index: -1; }
-.portal-figure { background-image: linear-gradient(90deg, var(--background) 0%, transparent 35%, transparent 67%, var(--background) 100%), linear-gradient(to bottom, transparent 40%, var(--background) 96%), url("/nous-assets/hero-figure.webp"); background-position: center; background-repeat: no-repeat; background-size: auto, auto, min(1080px, 105vw); inset: 0; opacity: 0.42; pointer-events: none; position: absolute; z-index: -1; }
-.portal-hand { background: url("/nous-assets/nous-hand.png") right bottom / 360px auto no-repeat; }
+.portal-stage::before {
+  background-image:
+    linear-gradient(90deg, oklch(1 0 0 / 5%) 1px, transparent 1px),
+    linear-gradient(oklch(1 0 0 / 5%) 1px, transparent 1px);
+  background-size: 80px 80px;
+  content: "";
+  inset: 0;
+  mask-image: linear-gradient(to bottom, black, transparent 75%);
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+/* Shared Nous art stack — real <img> layers, soft edge masks (no black paint-over) */
+.nous-art {
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+.nous-art > img {
+  display: block;
+  max-width: none;
+  pointer-events: none;
+  position: absolute;
+  user-select: none;
+}
+
+.nous-art-backdrop {
+  bottom: 0;
+  filter: brightness(2.8) contrast(1.15) saturate(1.2);
+  height: 100%;
+  mix-blend-mode: screen;
+  object-fit: cover;
+  object-position: right center;
+  opacity: 0.55;
+  right: 0;
+  top: 0;
+  width: min(48vw, 36rem);
+  -webkit-mask-image: linear-gradient(90deg, transparent, black 28%, black 100%);
+  mask-image: linear-gradient(90deg, transparent, black 28%, black 100%);
+}
+
+.nous-art-hero {
+  height: min(92vh, 54rem);
+  object-fit: contain;
+  object-position: right center;
+  opacity: 0.62;
+  right: max(-4rem, -6vw);
+  top: 50%;
+  transform: translateY(-48%);
+  width: auto;
+  -webkit-mask-image:
+    linear-gradient(90deg, transparent 0%, black 16%, black 92%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%);
+  mask-image:
+    linear-gradient(90deg, transparent 0%, black 16%, black 92%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* App surfaces */
+.dashboard-stage {
+  background: linear-gradient(to bottom, oklch(0.06 0 0), var(--background) 26rem);
+  isolation: isolate;
+}
+
+.chat-stage {
+  isolation: isolate;
+  position: relative;
+}
+
+/* Chat is denser — keep art readable without fighting the thread */
+.chat-stage .nous-art-backdrop {
+  opacity: 0.35;
+  width: min(42vw, 30rem);
+}
+
+.chat-stage .nous-art-hero {
+  height: min(78vh, 44rem);
+  opacity: 0.32;
+  right: max(-2rem, -3vw);
+}
+
+/* Critical: sidebar inset ships with solid bg-background and would hide all art */
+.chat-stage [data-slot="sidebar-inset"] {
+  background-color: transparent !important;
+  position: relative;
+  z-index: 10;
+}
+
+.chat-stage [data-slot="sidebar"] {
+  position: relative;
+  z-index: 20;
+}
+
+@media (max-width: 640px) {
+  .nous-art-backdrop {
+    opacity: 0.35;
+    width: min(70vw, 22rem);
+  }
+
+  .nous-art-hero {
+    height: min(70vh, 34rem);
+    opacity: 0.42;
+    right: -3rem;
+  }
+
+  .chat-stage .nous-art-hero {
+    opacity: 0.24;
+  }
+}

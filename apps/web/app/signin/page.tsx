@@ -67,7 +67,7 @@ export default function Signin() {
             </h1>
             <p className="mt-2 text-base text-muted-foreground">
               Access your{" "}
-              <span className="font-script text-xl text-foreground">
+              <span className="font-script text-foreground">
                 organizational memory
               </span>
               .

@@ -19,7 +19,7 @@ export default function Home() {
   }
 
   return (
-    <div className="portal-stage flex min-h-screen flex-col bg-background">
+    <div className="portal-stage relative flex min-h-screen flex-col bg-background">
       <header className="portal-header sticky top-0 z-20 border-b backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-8">
           <Link href="/" className="portal-wordmark text-xl font-semibold text-foreground">RecallOS</Link>
@@ -30,9 +30,14 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="relative flex flex-1 flex-col">
-        <div className="portal-figure" aria-hidden />
-        <section className="mx-auto flex w-full max-w-7xl flex-1 flex-col justify-center px-5 py-24 sm:px-8 lg:py-32">
+      <main className="relative z-0 flex flex-1 flex-col">
+        <div className="nous-art" aria-hidden>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="nous-art-backdrop" src="/nous-assets/backdrop-figure.webp" alt="" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="nous-art-hero" src="/nous-assets/hero-figure.webp" alt="" />
+        </div>
+        <section className="relative z-10 mx-auto flex w-full max-w-7xl flex-1 flex-col justify-center px-5 py-24 sm:px-8 lg:py-32">
           <p className="mb-7 font-mono text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">RecallOS / knowledge operating system</p>
           <h1 className="max-w-4xl text-5xl font-medium leading-[0.94] tracking-[-0.075em] text-foreground sm:text-7xl lg:text-[6.75rem]">
             Your work, <br />
@@ -47,7 +52,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="border-t border-border/80 bg-background/65 backdrop-blur-sm">
+        <section className="relative z-10 border-t border-border/80 bg-background/65 backdrop-blur-sm">
           <div className="mx-auto grid max-w-7xl divide-y divide-border/80 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             {[['01', 'Ingest every format', 'PDFs, images, audio, and video arrive in one searchable library.'], ['02', 'Retrieve the signal', 'Hybrid search finds meaning, context, and the exact source.'], ['03', 'Keep the thread', 'Chat over your accumulated company memory without starting over.']].map(([number, title, body]) => (
               <div key={number} className="min-h-44 px-5 py-7 sm:px-8 sm:py-9">
