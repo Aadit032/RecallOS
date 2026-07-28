@@ -5,18 +5,22 @@ import { useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
 
 import ChatPage from "@/components/chat-app"
+import { getSession } from "@/lib/api/auth"
 
 export default function ChatRoute() {
   const router = useRouter()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem("token")
-    if (!token) {
-      router.replace("/signin")
-      return
-    }
-    setReady(true)
+    getSession()
+      .then((session) => {
+        if (!session?.user) {
+          router.replace("/signin")
+          return
+        }
+        setReady(true)
+      })
+      .catch(() => router.replace("/signin"))
   }, [router])
 
   if (!ready) {

@@ -415,7 +415,14 @@ export function ChatSidebar({
                         <DropdownMenuContent side="top" align="start" className="w-48">
                            <DropdownMenuItem asChild><Link href="/dashboard">Dashboard</Link></DropdownMenuItem>
                            <DropdownMenuSeparator />
-                           <DropdownMenuItem variant="destructive" onClick={() => { localStorage.removeItem("token"); window.location.href = "/signin" }}>
+                           <DropdownMenuItem
+                              variant="destructive"
+                              onClick={async () => {
+                                 const { signOut } = await import("@/lib/api/auth")
+                                 await signOut().catch(() => {})
+                                 window.location.href = "/signin"
+                              }}
+                           >
                               Sign out
                            </DropdownMenuItem>
                         </DropdownMenuContent>

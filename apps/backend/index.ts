@@ -6,24 +6,38 @@ import { initTracing } from "@repo/langfuse/client";
 initTracing({ serviceName: "backend" });
 
 import cors from "cors";
+import express from "express";
+import { toNodeHandler } from "better-auth/node";
+import { auth } from "./auth.ts";
 import uploadRouter from "./routers/uploadRouter.ts";
-import authRouter from "./routers/authRouter.ts";
 import chatRouter from "./routers/chatRouter.ts";
 import projectRouter from "./routers/projectRouter.ts";
-import express from "express";
 import middleware from "./middleware.ts";
 import downloadRouter from "./routers/downloadRouter.ts";
 import searchRouter from "./routers/searchRouter.ts";
 
 const PORT = process.env.PORT;
+const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:3001";
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-console.log(`[server] CORS and JSON parser middleware configured`);
 
-app.use("/api/v1/auth", authRouter);
-console.log(`[server] Registered: /api/v1/auth`);
+// CORS must allow credentials for cookie-based sessions (cross-origin web → API).
+app.use(
+  cors({
+    origin: FRONTEND_URL,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+  })
+);
+console.log(`[server] CORS configured for origin=${FRONTEND_URL} (credentials)`);
+
+// Better Auth handler — must be mounted BEFORE express.json()
+// Express 5 uses *splat for catch-all routes.
+app.all("/api/auth/*splat", toNodeHandler(auth));
+console.log(`[server] Registered: /api/auth/* (Better Auth)`);
+
+app.use(express.json());
+console.log(`[server] JSON parser middleware configured`);
 
 app.use("/api/v1/upload", middleware, uploadRouter);
 console.log(`[server] Registered: /api/v1/upload (with middleware)`);

@@ -34,6 +34,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.18.1",
     "bcrypt": "^6.0.0",
+    "better-auth": "^1.6.25",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "exa-js": "^2.16.0",

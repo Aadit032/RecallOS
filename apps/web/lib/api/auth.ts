@@ -1,18 +1,28 @@
-import axios from "axios"
-import { API_BASE_AUTH } from "../api"
+import { authClient } from "@/lib/auth-client"
 
-export async function signin(username: string, password: string) {
-  const { data } = await axios.post(`${API_BASE_AUTH}/signin`, {
-    username,
-    password,
+/**
+ * Start Google OAuth sign-in. Redirects to Google, then back to callbackURL.
+ */
+export async function signInWithGoogle(callbackURL = "/dashboard") {
+  const result = await authClient.signIn.social({
+    provider: "google",
+    callbackURL,
   })
-  return data as { token: string; message?: string }
+  return result
 }
 
-export async function signup(username: string, password: string) {
-  const { data } = await axios.post(`${API_BASE_AUTH}/signup`, {
-    username,
-    password,
-  })
-  return data as { message?: string }
+/**
+ * End the current session (server-side revoke + clear cookie).
+ */
+export async function signOut() {
+  await authClient.signOut()
+}
+
+/**
+ * Fetch the current session from the auth server.
+ * Returns null when unauthenticated.
+ */
+export async function getSession() {
+  const { data } = await authClient.getSession()
+  return data
 }

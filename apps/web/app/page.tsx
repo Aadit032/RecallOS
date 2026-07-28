@@ -6,12 +6,17 @@ import { useRouter } from "next/navigation";
 import { ArrowUpRight, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { getSession } from "@/lib/api/auth";
 
 export default function Home() {
   const router = useRouter();
   const [authed, setAuthed] = useState<boolean | null>(null);
 
-  useEffect(() => setAuthed(Boolean(localStorage.getItem("token"))), []);
+  useEffect(() => {
+    getSession()
+      .then((session) => setAuthed(Boolean(session?.user)))
+      .catch(() => setAuthed(false));
+  }, []);
   useEffect(() => {
     if (authed) router.replace("/dashboard");
   }, [authed, router]);

@@ -12,10 +12,16 @@ export const PAGE_SIZE = 20
 export const DOCS_PAGE_SIZE = 10
 export const SEARCH_PAGE_SIZE = 10
 
-export function authHeaders() {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null
-  return { Authorization: "Bearer " + token }
+// Cookie sessions: always send credentials with API calls.
+axios.defaults.withCredentials = true
+
+/**
+ * Headers for authenticated API requests.
+ * Auth is cookie-based (Better Auth session); no Bearer token.
+ * Kept so call sites that spread authHeaders() continue to work.
+ */
+export function authHeaders(): Record<string, string> {
+  return {}
 }
 
 export function getErrorMessage(e: unknown, fallback: string): string {

@@ -333,7 +333,7 @@ a[role="button"] {
 .page-art--dashboard .page-art-image {
   filter: grayscale(1) contrast(1.08) brightness(0.75);
   object-position: 82% center;
-  opacity: 0.24;
+  opacity: 0.15;
   -webkit-mask-image: linear-gradient(
     90deg,
     transparent 8%,

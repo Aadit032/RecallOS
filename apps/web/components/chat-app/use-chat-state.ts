@@ -685,6 +685,7 @@ export function useChatState() {
 
          const response = await fetch(`${API_BASE_CHAT}/message`, {
             method: "POST",
+            credentials: "include",
             headers: {
                ...authHeaders(),
                "Content-Type": "application/json",

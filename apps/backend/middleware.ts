@@ -1,40 +1,50 @@
-import jwt from "jsonwebtoken";
-import type { Request, Response, NextFunction } from "express"
+import type { Request, Response, NextFunction } from "express";
+import { fromNodeHeaders } from "better-auth/node";
+import { auth } from "./auth.ts";
 
 declare global {
-   namespace Express {
-      interface Request {
-         userId?: string
-      }
-   }
+  namespace Express {
+    interface Request {
+      userId?: string;
+    }
+  }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET as string;
+/**
+ * Session middleware — replaces JWT Bearer auth.
+ * Validates the Better Auth session cookie and sets req.userId for route handlers.
+ * Session expiry + sliding renewal is handled by Better Auth (expiresIn / updateAge).
+ */
+export default async function middleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const method = req.method;
+  const path = req.path;
+  console.log(`[middleware] Entry — ${method} ${path}`);
 
-export default async function middleware(req: Request, res: Response, next: NextFunction){
-   const authHeaders = req.headers["authorization"];
-   const method = req.method;
-   const path = req.path;
-   console.log(`[middleware] Entry — ${method} ${path}`);
+  try {
+    const session = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
 
-   const token = authHeaders?.split("Bearer ")[1];
-   console.log(`[middleware] Token present: ${token ? "yes" : "no"}`);
-
-   if(!token){
-      console.warn(`[middleware] Missing token — ${method} ${path}`);
-      res.status(404).json({ message: "Missing token in request" });
+    if (!session?.user?.id) {
+      console.warn(`[middleware] No session — ${method} ${path}`);
+      res.status(401).json({ message: "Unauthorized" });
       return;
-   }
+    }
 
-   try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as jwt.JwtPayload;
-      req.userId = decoded.id;
-      console.log(`[middleware] Authenticated: userId=${req.userId} — ${method} ${path}`);
-      next();
-   } catch (e) {
-      console.error(`[middleware] Token verification failed — ${method} ${path}:`, e);
-      res.status(401).json({ error: "Unauthorized" });
-      return
-   }
-    
+    req.userId = session.user.id;
+    console.log(
+      `[middleware] Authenticated: userId=${req.userId} — ${method} ${path}`
+    );
+    next();
+  } catch (e) {
+    console.error(
+      `[middleware] Session verification failed — ${method} ${path}:`,
+      e
+    );
+    res.status(401).json({ error: "Unauthorized" });
+  }
 }
