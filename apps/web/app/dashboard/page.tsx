@@ -1,13 +1,13 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useInfiniteQuery,
   useMutation,
   useQueryClient,
-} from "@tanstack/react-query"
+} from "@tanstack/react-query";
 import {
   AudioLines,
   ChevronDown,
@@ -23,10 +23,10 @@ import {
   Trash2,
   Upload,
   X,
-} from "lucide-react"
+} from "lucide-react";
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -34,11 +34,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Skeleton } from "@/components/ui/skeleton"
-import { getErrorMessage } from "@/lib/api"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { getErrorMessage } from "@/lib/api";
 import {
   deleteDocument,
   fetchDocumentsPage,
@@ -46,17 +46,17 @@ import {
   uploadDocument,
   type DocStatus,
   type DocumentItem,
-} from "@/lib/api/documents"
-import { searchDocuments } from "@/lib/api/search"
-import { queryKeys } from "@/lib/query-keys"
-import { cn } from "@/lib/utils"
+} from "@/lib/api/documents";
+import { searchDocuments } from "@/lib/api/search";
+import { queryKeys } from "@/lib/query-keys";
+import { cn } from "@/lib/utils";
 
-type DashboardTab = "upload" | "search" | "chat"
+type DashboardTab = "upload" | "search" | "chat";
 
 function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 function formatDate(iso: string) {
@@ -66,70 +66,70 @@ function formatDate(iso: string) {
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  })
+  });
 }
 
 function statusLabel(status: DocStatus): string {
   switch (status) {
     case "UPLOADED":
-      return "Uploaded"
+      return "Uploaded";
     case "QUEUED":
-      return "Queued"
+      return "Queued";
     case "PARSING":
-      return "Parsing"
+      return "Parsing";
     case "PARSED":
-      return "Parsed"
+      return "Parsed";
     case "EMBEDDING":
-      return "Embedding"
+      return "Embedding";
     case "INDEXED":
-      return "Indexed"
+      return "Indexed";
     case "READY":
-      return "Ready"
+      return "Ready";
     case "FAILED":
-      return "Failed"
+      return "Failed";
     default:
-      return status
+      return status;
   }
 }
 
 function statusVariant(
-  status: DocStatus
+  status: DocStatus,
 ): "default" | "secondary" | "outline" | "destructive" {
   switch (status) {
     case "READY":
-      return "default"
+      return "default";
     case "FAILED":
-      return "destructive"
+      return "destructive";
     case "PARSING":
     case "EMBEDDING":
-      return "secondary"
+      return "secondary";
     case "UPLOADED":
     case "QUEUED":
     case "PARSED":
     case "INDEXED":
-      return "outline"
+      return "outline";
     default:
-      return "outline"
+      return "outline";
   }
 }
 
 function modalityIcon(modality?: string | null) {
   switch ((modality ?? "").toLowerCase()) {
     case "image":
-      return ImageIcon
+      return ImageIcon;
     case "audio":
-      return AudioLines
+      return AudioLines;
     case "video":
-      return Film
+      return Film;
     case "pdf":
     default:
-      return FileText
+      return FileText;
   }
 }
 
 function scorePercent(score: number) {
   // RRF + tag boost typically lands roughly 0–0.8; map to a soft bar.
-  return Math.max(4, Math.min(100, Math.round(score * 120)))
+  return Math.max(4, Math.min(100, Math.round(score * 120)));
 }
 
 const SEARCH_MODALITIES = [
@@ -138,7 +138,7 @@ const SEARCH_MODALITIES = [
   { value: "image", label: "Image", icon: ImageIcon },
   { value: "audio", label: "Audio", icon: AudioLines },
   { value: "video", label: "Video", icon: Film },
-] as const
+] as const;
 
 const pipeline = [
   {
@@ -166,13 +166,13 @@ const pipeline = [
     title: "Embed",
     body: "Embedding worker generates vectors and indexes into Qdrant.",
   },
-]
+];
 
 const TABS: {
-  id: DashboardTab
-  label: string
-  icon: typeof Upload
-  hint: string
+  id: DashboardTab;
+  label: string;
+  icon: typeof Upload;
+  hint: string;
 }[] = [
   {
     id: "upload",
@@ -192,7 +192,7 @@ const TABS: {
     icon: MessageSquare,
     hint: "Ask your knowledge base",
   },
-]
+];
 
 function DocumentRowSkeleton() {
   return (
@@ -214,7 +214,7 @@ function DocumentRowSkeleton() {
         <Skeleton className="h-8 w-[4.5rem] rounded-md" />
       </div>
     </li>
-  )
+  );
 }
 
 function DocumentListSkeleton({ count = 4 }: { count?: number }) {
@@ -224,7 +224,7 @@ function DocumentListSkeleton({ count = 4 }: { count?: number }) {
         <DocumentRowSkeleton key={i} />
       ))}
     </ul>
-  )
+  );
 }
 
 function SearchResultSkeleton() {
@@ -250,7 +250,7 @@ function SearchResultSkeleton() {
         <Skeleton className="h-8 w-[5.5rem] shrink-0 rounded-md" />
       </div>
     </li>
-  )
+  );
 }
 
 function SearchListSkeleton({ count = 3 }: { count?: number }) {
@@ -260,29 +260,29 @@ function SearchListSkeleton({ count = 3 }: { count?: number }) {
         <SearchResultSkeleton key={i} />
       ))}
     </ul>
-  )
+  );
 }
 
 export default function Dashboard() {
-  const router = useRouter()
-  const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = useState<DashboardTab>("upload")
-  const [file, setFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [status, setStatus] = useState("")
-  const [uploadTags, setUploadTags] = useState<string[]>([])
-  const [tagDraft, setTagDraft] = useState("")
-  const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null)
-  const [dragOver, setDragOver] = useState(false)
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<DashboardTab>("upload");
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
+  const [uploadTags, setUploadTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Semantic document search
-  const [searchQuery, setSearchQuery] = useState("")
+  const [searchQuery, setSearchQuery] = useState("");
   /** Empty string = any modality */
-  const [searchModality, setSearchModality] = useState("")
+  const [searchModality, setSearchModality] = useState("");
   const [activeSearch, setActiveSearch] = useState<{
-    query: string
-    modality: string
-  } | null>(null)
+    query: string;
+    modality: string;
+  } | null>(null);
 
   const documentsQuery = useInfiniteQuery({
     queryKey: queryKeys.documents.list(),
@@ -295,48 +295,44 @@ export default function Dashboard() {
     refetchOnWindowFocus: true,
     // Auto-poll while any document is still processing (no manual refresh needed)
     refetchInterval: (query) => {
-      const pages = query.state.data?.pages
-      if (!pages?.length) return false
+      const pages = query.state.data?.pages;
+      if (!pages?.length) return false;
       const busy = pages.some((page) =>
         page.documents.some(
-          (d) => d.status !== "READY" && d.status !== "FAILED"
-        )
-      )
-      return busy ? 2_500 : false
+          (d) => d.status !== "READY" && d.status !== "FAILED",
+        ),
+      );
+      return busy ? 2_500 : false;
     },
     refetchIntervalInBackground: false,
-  })
+  });
 
   const documents = useMemo(
     () => documentsQuery.data?.pages.flatMap((p) => p.documents) ?? [],
-    [documentsQuery.data]
-  )
+    [documentsQuery.data],
+  );
 
   const hasProcessingDocs = useMemo(
-    () =>
-      documents.some(
-        (d) => d.status !== "READY" && d.status !== "FAILED"
-      ),
-    [documents]
-  )
+    () => documents.some((d) => d.status !== "READY" && d.status !== "FAILED"),
+    [documents],
+  );
 
-  const docsLoading = documentsQuery.isLoading
+  const docsLoading = documentsQuery.isLoading;
   /** Background refresh (refresh click, poll, post-upload) while list is already shown */
   const docsRefreshing =
     documentsQuery.isFetching &&
     !documentsQuery.isLoading &&
-    !documentsQuery.isFetchingNextPage
+    !documentsQuery.isFetchingNextPage;
   const docsError = documentsQuery.isError
     ? "Could not load documents. Sign in and try again."
-    : ""
-  const nextCursor =
-    documentsQuery.data?.pages.at(-1)?.nextCursor ?? null
-  const loadingMore = documentsQuery.isFetchingNextPage
+    : "";
+  const nextCursor = documentsQuery.data?.pages.at(-1)?.nextCursor ?? null;
+  const loadingMore = documentsQuery.isFetchingNextPage;
 
   const searchQueryResult = useInfiniteQuery({
     queryKey: queryKeys.search.results(
       activeSearch?.query ?? "",
-      activeSearch?.modality ?? ""
+      activeSearch?.modality ?? "",
     ),
     queryFn: ({ pageParam }) =>
       searchDocuments({
@@ -350,63 +346,58 @@ export default function Dashboard() {
         ? lastPage.nextOffset
         : undefined,
     enabled: Boolean(activeSearch?.query),
-  })
+  });
 
   const searchResults = useMemo(
     () => searchQueryResult.data?.pages.flatMap((p) => p.documents) ?? [],
-    [searchQueryResult.data]
-  )
-  const searchLoadingMore = searchQueryResult.isFetchingNextPage
+    [searchQueryResult.data],
+  );
+  const searchLoadingMore = searchQueryResult.isFetchingNextPage;
   const searchError = searchQueryResult.isError
     ? getErrorMessage(searchQueryResult.error, "Search failed")
-    : ""
-  const searchHasMore = Boolean(searchQueryResult.hasNextPage)
+    : "";
+  const searchHasMore = Boolean(searchQueryResult.hasNextPage);
   const searchTotal =
-    searchQueryResult.data?.pages[0]?.totalMatched ?? searchResults.length
-  const hasSearched = activeSearch !== null
+    searchQueryResult.data?.pages[0]?.totalMatched ?? searchResults.length;
+  const hasSearched = activeSearch !== null;
   // Only show full-page spinner on the first page of a search, not on load-more
   const searchInitialLoading =
     Boolean(activeSearch) &&
     searchQueryResult.isFetching &&
     !searchQueryResult.isFetchingNextPage &&
-    !searchQueryResult.data
+    !searchQueryResult.data;
 
   const uploadMutation = useMutation({
-    mutationFn: async ({
-      file,
-      tags,
-    }: {
-      file: File
-      tags: string[]
-    }) => uploadDocument(file, tags, setStatus),
+    mutationFn: async ({ file, tags }: { file: File; tags: string[] }) =>
+      uploadDocument(file, tags, setStatus),
     onSuccess: async () => {
-      setFile(null)
-      setUploadTags([])
-      setTagDraft("")
-      setStatus("Upload complete.")
+      setFile(null);
+      setUploadTags([]);
+      setTagDraft("");
+      setStatus("Upload complete.");
       // Force an immediate list refresh so the new doc appears without manual refresh
       await queryClient.invalidateQueries({
         queryKey: queryKeys.documents.all,
-      })
+      });
       await queryClient.refetchQueries({
         queryKey: queryKeys.documents.list(),
-      })
+      });
     },
     onError: () => {
-      setStatus("Upload failed.")
+      setStatus("Upload failed.");
     },
-  })
-  const uploading = uploadMutation.isPending
+  });
+  const uploading = uploadMutation.isPending;
 
   const downloadMutation = useMutation({
     mutationFn: (key: string) => getDownloadUrl(key),
     onSuccess: (url) => {
-      window.open(url, "_blank")
+      window.open(url, "_blank");
     },
-  })
+  });
   const downloadingKey = downloadMutation.isPending
     ? (downloadMutation.variables ?? null)
-    : null
+    : null;
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteDocument(id),
@@ -415,165 +406,177 @@ export default function Dashboard() {
       queryClient.setQueriesData(
         { queryKey: queryKeys.documents.list() },
         (old: unknown) => {
-          if (!old || typeof old !== "object" || !("pages" in old)) return old
+          if (!old || typeof old !== "object" || !("pages" in old)) return old;
           const data = old as {
-            pages: { documents: DocumentItem[]; nextCursor: string | null }[]
-            pageParams: unknown[]
-          }
+            pages: { documents: DocumentItem[]; nextCursor: string | null }[];
+            pageParams: unknown[];
+          };
           return {
             ...data,
             pages: data.pages.map((page) => ({
               ...page,
               documents: page.documents.filter((d) => d.id !== id),
             })),
-          }
-        }
-      )
+          };
+        },
+      );
       queryClient.setQueriesData(
         { queryKey: queryKeys.search.all },
         (old: unknown) => {
-          if (!old || typeof old !== "object" || !("pages" in old)) return old
+          if (!old || typeof old !== "object" || !("pages" in old)) return old;
           const data = old as {
-            pages: { documents: DocumentItem[] }[]
-            pageParams: unknown[]
-          }
+            pages: { documents: DocumentItem[] }[];
+            pageParams: unknown[];
+          };
           return {
             ...data,
             pages: data.pages.map((page) => ({
               ...page,
               documents: page.documents.filter((d) => d.id !== id),
             })),
-          }
-        }
-      )
-      setDeleteTarget(null)
+          };
+        },
+      );
+      setDeleteTarget(null);
       await queryClient.invalidateQueries({
         queryKey: queryKeys.documents.all,
-      })
-      await queryClient.invalidateQueries({ queryKey: queryKeys.search.all })
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.search.all });
     },
     onError: (e) => {
-      setDeleteTarget(null)
-      console.error(`[dashboard:delete]`, e)
+      setDeleteTarget(null);
+      console.error(`[dashboard:delete]`, e);
     },
-  })
+  });
   const deletingId = deleteMutation.isPending
     ? (deleteMutation.variables ?? null)
-    : null
+    : null;
 
   useEffect(() => {
     if (!file) {
-      setPreviewUrl(null)
-      return
+      setPreviewUrl(null);
+      return;
     }
 
-    const url = URL.createObjectURL(file)
-    setPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
-  }, [file])
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
   const addTag = (raw: string) => {
     const parts = raw
       .split(",")
       .map((t) => t.trim())
-      .filter(Boolean)
-    if (parts.length === 0) return
+      .filter(Boolean);
+    if (parts.length === 0) return;
     setUploadTags((prev) => {
-      const seen = new Set(prev.map((t) => t.toLowerCase()))
-      const next = [...prev]
+      const seen = new Set(prev.map((t) => t.toLowerCase()));
+      const next = [...prev];
       for (const p of parts) {
-        const key = p.toLowerCase()
-        if (seen.has(key) || next.length >= 20) continue
-        if (p.length > 40) continue
-        seen.add(key)
-        next.push(p)
+        const key = p.toLowerCase();
+        if (seen.has(key) || next.length >= 20) continue;
+        if (p.length > 40) continue;
+        seen.add(key);
+        next.push(p);
       }
-      return next
-    })
-    setTagDraft("")
-  }
+      return next;
+    });
+    setTagDraft("");
+  };
 
   const removeTag = (tag: string) => {
-    setUploadTags((prev) => prev.filter((t) => t !== tag))
-  }
+    setUploadTags((prev) => prev.filter((t) => t !== tag));
+  };
 
   const clearFile = () => {
-    setFile(null)
-    setStatus("")
-    setUploadTags([])
-    setTagDraft("")
-  }
+    setFile(null);
+    setStatus("");
+    setUploadTags([]);
+    setTagDraft("");
+  };
 
   const pickFile = (selected: File | null | undefined) => {
-    setStatus("")
-    setFile(selected ?? null)
-  }
+    setStatus("");
+    setFile(selected ?? null);
+  };
 
   const handleUpload = () => {
-    if (!file || uploading) return
-    uploadMutation.mutate({ file, tags: uploadTags })
-  }
+    if (!file || uploading) return;
+    uploadMutation.mutate({ file, tags: uploadTags });
+  };
 
   const runSearch = () => {
-    const q = searchQuery.trim()
-    if (!q) return
-    const next = { query: q, modality: searchModality }
-    setActiveSearch(next)
+    const q = searchQuery.trim();
+    if (!q) return;
+    const next = { query: q, modality: searchModality };
+    setActiveSearch(next);
     // Re-run even if the same query key is already cached
     void queryClient.invalidateQueries({
       queryKey: queryKeys.search.results(next.query, next.modality),
-    })
-  }
+    });
+  };
 
   const loadMoreSearch = () => {
     if (searchHasMore && !searchLoadingMore && !searchInitialLoading) {
-      void searchQueryResult.fetchNextPage()
+      void searchQueryResult.fetchNextPage();
     }
-  }
+  };
 
   const loadMore = () => {
-    if (nextCursor && !loadingMore) void documentsQuery.fetchNextPage()
-  }
+    if (nextCursor && !loadingMore) void documentsQuery.fetchNextPage();
+  };
 
   const handleDownload = (key: string) => {
-    downloadMutation.mutate(key)
-  }
+    downloadMutation.mutate(key);
+  };
 
   const confirmDeleteDocument = () => {
-    if (!deleteTarget || deleteMutation.isPending) return
-    deleteMutation.mutate(deleteTarget.id)
-  }
+    if (!deleteTarget || deleteMutation.isPending) return;
+    deleteMutation.mutate(deleteTarget.id);
+  };
 
   const fetchDocuments = async () => {
-    await documentsQuery.refetch({ cancelRefetch: false })
-  }
+    await documentsQuery.refetch({ cancelRefetch: false });
+  };
 
   const isPdf =
-    file?.type === "application/pdf" || file?.name.toLowerCase().endsWith(".pdf")
-  const isImage = Boolean(file?.type.startsWith("image/"))
-  const isAudio = Boolean(file?.type.startsWith("audio/"))
-  const isVideo = Boolean(file?.type.startsWith("video/"))
+    file?.type === "application/pdf" ||
+    file?.name.toLowerCase().endsWith(".pdf");
+  const isImage = Boolean(file?.type.startsWith("image/"));
+  const isAudio = Boolean(file?.type.startsWith("audio/"));
+  const isVideo = Boolean(file?.type.startsWith("video/"));
 
-  const readyCount = documents.filter((d) => d.status === "READY").length
+  const readyCount = documents.filter((d) => d.status === "READY").length;
 
   return (
     <div className="dashboard-stage relative flex min-h-screen flex-col overflow-hidden">
-      <div className="nous-art" aria-hidden>
+      <div
+        className={`page-art page-art--dashboard page-art--dashboard-${activeTab}`}
+        aria-hidden
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="nous-art-backdrop" src="/nous-assets/backdrop-figure.webp" alt="" />
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="nous-art-hero" src="/nous-assets/hero-figure.webp" alt="" />
+        <img
+          className="page-art-image"
+          src={
+            activeTab === "search"
+              ? "/bg-assets/side.jpeg"
+              : "/bg-assets/ATHENA.png"
+          }
+          alt=""
+        />
       </div>
       <header className="sticky top-0 z-50 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <Link href="/dashboard" className="flex items-center gap-2.5 tracking-tight">
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2.5 tracking-tight"
+          >
             <span className="font-display text-lg font-medium tracking-tight">
               RecallOS
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1 sm:gap-2">
-          </nav>
+          <nav className="flex items-center gap-1 sm:gap-2"></nav>
         </div>
       </header>
 
@@ -644,8 +647,8 @@ export default function Dashboard() {
             aria-label="Dashboard section"
           >
             {TABS.map((tab) => {
-              const Icon = tab.icon
-              const active = activeTab === tab.id
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
@@ -654,16 +657,16 @@ export default function Dashboard() {
                   aria-selected={active}
                   onClick={() => {
                     if (tab.id === "chat") {
-                      router.push("/chat")
-                      return
+                      router.push("/chat");
+                      return;
                     }
-                    setActiveTab(tab.id)
+                    setActiveTab(tab.id);
                   }}
                   className={cn(
                     "relative inline-flex items-center gap-1.5 pb-2.5 text-sm transition-colors",
                     active
                       ? "font-medium text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   <Icon className="size-3.5" />
@@ -675,7 +678,7 @@ export default function Dashboard() {
                     />
                   )}
                 </button>
-              )
+              );
             })}
           </div>
           <div className="h-px w-full bg-border/70" />
@@ -700,29 +703,29 @@ export default function Dashboard() {
                 <label
                   htmlFor="file"
                   onDragEnter={(e) => {
-                    e.preventDefault()
-                    setDragOver(true)
+                    e.preventDefault();
+                    setDragOver(true);
                   }}
                   onDragOver={(e) => {
-                    e.preventDefault()
-                    setDragOver(true)
+                    e.preventDefault();
+                    setDragOver(true);
                   }}
                   onDragLeave={(e) => {
-                    e.preventDefault()
-                    setDragOver(false)
+                    e.preventDefault();
+                    setDragOver(false);
                   }}
                   onDrop={(e) => {
-                    e.preventDefault()
-                    setDragOver(false)
-                    const dropped = e.dataTransfer.files?.[0]
-                    if (dropped) pickFile(dropped)
+                    e.preventDefault();
+                    setDragOver(false);
+                    const dropped = e.dataTransfer.files?.[0];
+                    if (dropped) pickFile(dropped);
                   }}
                   className={cn(
                     "group relative flex cursor-pointer flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-all",
                     dragOver
                       ? "border-primary bg-primary/5 shadow-inner"
                       : "border-border/80 bg-card/40 hover:border-primary/40 hover:bg-card/70",
-                    file && "border-solid border-border/70 bg-card/60 py-6"
+                    file && "border-solid border-border/70 bg-card/60 py-6",
                   )}
                 >
                   <div className="archive-grid pointer-events-none absolute inset-0 opacity-20" />
@@ -763,9 +766,9 @@ export default function Dashboard() {
                         size="icon-sm"
                         className="relative z-10 shrink-0"
                         onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          clearFile()
+                          e.preventDefault();
+                          e.stopPropagation();
+                          clearFile();
                         }}
                         aria-label="Remove selected file"
                       >
@@ -865,23 +868,23 @@ export default function Dashboard() {
                     onChange={(e) => setTagDraft(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault()
-                        addTag(tagDraft)
+                        e.preventDefault();
+                        addTag(tagDraft);
                       } else if (
                         e.key === "Backspace" &&
                         !tagDraft &&
                         uploadTags.length > 0
                       ) {
-                        removeTag(uploadTags[uploadTags.length - 1]!)
+                        removeTag(uploadTags[uploadTags.length - 1]!);
                       }
                     }}
                     onBlur={() => {
-                      if (tagDraft.trim()) addTag(tagDraft)
+                      if (tagDraft.trim()) addTag(tagDraft);
                     }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Up to 20 tags. Stored on the document and embedded with every
-                    chunk.
+                    Up to 20 tags. Stored on the document and embedded with
+                    every chunk.
                   </p>
                 </div>
 
@@ -911,7 +914,7 @@ export default function Dashboard() {
                           ? "text-destructive"
                           : status === "Upload complete."
                             ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-muted-foreground"
+                            : "text-muted-foreground",
                       )}
                     >
                       {status}
@@ -984,7 +987,7 @@ export default function Dashboard() {
                   <RefreshCw
                     className={cn(
                       "size-3.5",
-                      (docsLoading || docsRefreshing) && "animate-spin"
+                      (docsLoading || docsRefreshing) && "animate-spin",
                     )}
                   />
                   {docsLoading || docsRefreshing ? "Refreshing…" : "Refresh"}
@@ -1003,7 +1006,9 @@ export default function Dashboard() {
               )}
 
               {!docsLoading && docsError && (
-                <p className="text-sm font-medium text-destructive">{docsError}</p>
+                <p className="text-sm font-medium text-destructive">
+                  {docsError}
+                </p>
               )}
 
               {!docsLoading && !docsError && documents.length === 0 && (
@@ -1025,13 +1030,13 @@ export default function Dashboard() {
                   <ul
                     className={cn(
                       "space-y-2.5 transition-opacity duration-200",
-                      docsRefreshing && "opacity-60"
+                      docsRefreshing && "opacity-60",
                     )}
                   >
                     {documents.map((doc) => {
-                      const Icon = modalityIcon(doc.modality)
+                      const Icon = modalityIcon(doc.modality);
                       const isProcessing =
-                        doc.status !== "READY" && doc.status !== "FAILED"
+                        doc.status !== "READY" && doc.status !== "FAILED";
                       return (
                         <li
                           key={doc.id}
@@ -1048,7 +1053,7 @@ export default function Dashboard() {
                               doc.status === "QUEUED" ||
                               doc.status === "PARSED" ||
                               doc.status === "INDEXED") &&
-                              "border-dashed"
+                              "border-dashed",
                           )}
                         >
                           <div className="flex min-w-0 items-start gap-3">
@@ -1126,7 +1131,7 @@ export default function Dashboard() {
                             </Button>
                           </div>
                         </li>
-                      )
+                      );
                     })}
                   </ul>
                   {loadingMore && (
@@ -1163,8 +1168,7 @@ export default function Dashboard() {
                   Hybrid retrieval
                 </p>
                 <h2 className="font-display text-3xl font-medium tracking-tight sm:text-4xl">
-                  Search your{" "}
-                  <span className="font-script">memory</span>
+                  Search your <span className="font-script">memory</span>
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-base text-muted-foreground">
                   Dense + sparse vectors fused with RRF. Filter by type when you
@@ -1175,8 +1179,8 @@ export default function Dashboard() {
               <form
                 className="memory-glow space-y-5 rounded-2xl border border-border/80 bg-card/80 p-5 sm:p-6"
                 onSubmit={(e) => {
-                  e.preventDefault()
-                  runSearch()
+                  e.preventDefault();
+                  runSearch();
                 }}
               >
                 <div className="relative">
@@ -1199,8 +1203,8 @@ export default function Dashboard() {
                     aria-label="Filter by document type"
                   >
                     {SEARCH_MODALITIES.map((m) => {
-                      const active = searchModality === m.value
-                      const Icon = m.icon
+                      const active = searchModality === m.value;
+                      const Icon = m.icon;
                       return (
                         <button
                           key={m.value || "any"}
@@ -1212,14 +1216,14 @@ export default function Dashboard() {
                             active
                               ? "border-primary bg-primary text-primary-foreground shadow-sm"
                               : "border-border/80 bg-background/50 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
-                            searchInitialLoading && "opacity-60"
+                            searchInitialLoading && "opacity-60",
                           )}
                           aria-pressed={active}
                         >
                           <Icon className="size-3.5" />
                           {m.label}
                         </button>
-                      )
+                      );
                     })}
                   </div>
 
@@ -1286,7 +1290,7 @@ export default function Dashboard() {
                         key={example}
                         type="button"
                         onClick={() => {
-                          setSearchQuery(example)
+                          setSearchQuery(example);
                         }}
                         className="rounded-full border border-border/80 bg-card/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
                       >
@@ -1306,8 +1310,8 @@ export default function Dashboard() {
                       No matching documents
                     </p>
                     <p className="mt-2 text-base text-muted-foreground">
-                      Try different wording, clear the type filter, or wait until
-                      uploads show Ready.
+                      Try different wording, clear the type filter, or wait
+                      until uploads show Ready.
                     </p>
                   </div>
                 )}
@@ -1344,8 +1348,8 @@ export default function Dashboard() {
 
                   <ul className="space-y-3">
                     {searchResults.map((doc, idx) => {
-                      const Icon = modalityIcon(doc.modality)
-                      const pct = scorePercent(doc.score)
+                      const Icon = modalityIcon(doc.modality);
+                      const pct = scorePercent(doc.score);
                       return (
                         <li
                           key={`${doc.id}-${idx}`}
@@ -1406,7 +1410,9 @@ export default function Dashboard() {
                                 variant="outline"
                                 size="sm"
                                 disabled={downloadingKey === doc.ObjectKey}
-                                onClick={() => void handleDownload(doc.ObjectKey)}
+                                onClick={() =>
+                                  void handleDownload(doc.ObjectKey)
+                                }
                               >
                                 {downloadingKey === doc.ObjectKey ? (
                                   <Loader2 className="size-3.5 animate-spin" />
@@ -1420,7 +1426,7 @@ export default function Dashboard() {
                             </div>
                           </div>
                         </li>
-                      )
+                      );
                     })}
                   </ul>
 
@@ -1453,7 +1459,7 @@ export default function Dashboard() {
       <Dialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
+          if (!open) setDeleteTarget(null);
         }}
       >
         <DialogContent>
@@ -1485,5 +1491,5 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }

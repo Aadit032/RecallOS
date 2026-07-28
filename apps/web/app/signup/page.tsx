@@ -1,49 +1,53 @@
-"use client"
+"use client";
 
-import { useRef } from "react"
-import Link from "next/link"
-import { useRouter } from "next/navigation"
-import { useMutation } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
+import { useRef } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useMutation } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { signup } from "@/lib/api/auth"
-import { getErrorMessage } from "@/lib/api"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { signup } from "@/lib/api/auth";
+import { getErrorMessage } from "@/lib/api";
 
 export default function Signup() {
-  const router = useRouter()
-  const usernameRef = useRef<HTMLInputElement>(null)
-  const passwordRef = useRef<HTMLInputElement>(null)
+  const router = useRouter();
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const signupMutation = useMutation({
     mutationFn: ({
       username,
       password,
     }: {
-      username: string
-      password: string
+      username: string;
+      password: string;
     }) => signup(username, password),
     onSuccess: () => {
-      router.push("/signin")
+      router.push("/signin");
     },
-  })
+  });
 
   function handleAuth(e: React.FormEvent) {
-    e.preventDefault()
-    const username = usernameRef.current?.value
-    const password = passwordRef.current?.value
-    if (!username || !password) return
-    signupMutation.mutate({ username, password })
+    e.preventDefault();
+    const username = usernameRef.current?.value;
+    const password = passwordRef.current?.value;
+    if (!username || !password) return;
+    signupMutation.mutate({ username, password });
   }
 
   const error = signupMutation.isError
     ? getErrorMessage(signupMutation.error, "Sign up failed. Try again.")
-    : ""
+    : "";
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="auth-stage auth-stage--signup relative flex min-h-screen flex-col overflow-hidden">
+      <div className="page-art page-art--signup" aria-hidden>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="page-art-image" src="/bg-assets/side.jpeg" alt="" />
+      </div>
       <header className="border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5 tracking-tight">
@@ -54,7 +58,7 @@ export default function Signup() {
         </div>
       </header>
 
-      <main className="relative flex flex-1 items-center justify-center px-4 py-16">
+      <main className="relative z-10 flex flex-1 items-center justify-center px-4 py-16">
         <div className="archive-grid pointer-events-none absolute inset-0 opacity-30" />
         <div className="memory-glow relative w-full max-w-md overflow-hidden rounded-xl border border-border/80 bg-card">
           <div className="border-b border-border/80 px-6 py-8 sm:px-8">
@@ -103,7 +107,10 @@ export default function Signup() {
                 />
               </div>
               {error && (
-                <p className="text-sm font-medium text-destructive" role="alert">
+                <p
+                  className="text-sm font-medium text-destructive"
+                  role="alert"
+                >
                   {error}
                 </p>
               )}
@@ -138,5 +145,5 @@ export default function Signup() {
         </div>
       </main>
     </div>
-  )
+  );
 }

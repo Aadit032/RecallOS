@@ -48,7 +48,8 @@
 }
 
 @utility font-script {
-  font-family: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
+  font-family:
+    var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
   font-style: italic;
   font-optical-sizing: auto;
   font-weight: 450;
@@ -57,20 +58,35 @@
 /* RecallOS uses a single, deliberately black operating surface. */
 :root {
   --radius: 0.375rem;
-  --background: oklch(0.045 0 0); --foreground: oklch(0.97 0 0);
-  --card: oklch(0.075 0 0); --card-foreground: oklch(0.97 0 0);
-  --popover: oklch(0.09 0 0); --popover-foreground: oklch(0.97 0 0);
-  --primary: oklch(0.97 0 0); --primary-foreground: oklch(0.08 0 0);
-  --secondary: oklch(0.14 0 0); --secondary-foreground: oklch(0.97 0 0);
-  --muted: oklch(0.12 0 0); --muted-foreground: oklch(0.66 0 0);
-  --accent: oklch(0.16 0 0); --accent-foreground: oklch(0.97 0 0);
-  --destructive: oklch(0.65 0.18 22); --border: oklch(1 0 0 / 13%);
-  --input: oklch(1 0 0 / 16%); --ring: oklch(0.7 0 0);
-  --citation: oklch(0.82 0 0); --citation-foreground: oklch(0.12 0 0); --signal: oklch(0.97 0 0);
-  --sidebar: oklch(0.055 0 0); --sidebar-foreground: oklch(0.94 0 0);
-  --sidebar-primary: oklch(0.97 0 0); --sidebar-primary-foreground: oklch(0.08 0 0);
-  --sidebar-accent: oklch(0.14 0 0); --sidebar-accent-foreground: oklch(0.97 0 0);
-  --sidebar-border: oklch(1 0 0 / 11%); --sidebar-ring: oklch(0.7 0 0);
+  --background: oklch(0.045 0 0);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.075 0 0);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.09 0 0);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.97 0 0);
+  --primary-foreground: oklch(0.08 0 0);
+  --secondary: oklch(0.14 0 0);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.12 0 0);
+  --muted-foreground: oklch(0.66 0 0);
+  --accent: oklch(0.16 0 0);
+  --accent-foreground: oklch(0.97 0 0);
+  --destructive: oklch(0.65 0.18 22);
+  --border: oklch(1 0 0 / 13%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.7 0 0);
+  --citation: oklch(0.82 0 0);
+  --citation-foreground: oklch(0.12 0 0);
+  --signal: oklch(0.97 0 0);
+  --sidebar: oklch(0.055 0 0);
+  --sidebar-foreground: oklch(0.94 0 0);
+  --sidebar-primary: oklch(0.97 0 0);
+  --sidebar-primary-foreground: oklch(0.08 0 0);
+  --sidebar-accent: oklch(0.14 0 0);
+  --sidebar-accent-foreground: oklch(0.97 0 0);
+  --sidebar-border: oklch(1 0 0 / 11%);
+  --sidebar-ring: oklch(0.7 0 0);
 }
 
 @layer base {
@@ -80,10 +96,15 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    background-image: radial-gradient(ellipse 80% 60% at 50% -20%, oklch(1 0 0 / 9%), transparent 62%), linear-gradient(to bottom, oklch(0.06 0 0), var(--background) 38rem);
+    background-image:
+      radial-gradient(
+        ellipse 80% 60% at 50% -20%,
+        oklch(1 0 0 / 9%),
+        transparent 62%
+      ),
+      linear-gradient(to bottom, oklch(0.06 0 0), var(--background) 38rem);
     background-attachment: fixed;
   }
-
 
   ::selection {
     background: color-mix(in oklch, var(--foreground) 12%, transparent);
@@ -187,14 +208,23 @@
   backdrop-filter: blur(8px);
 }
 
-button, [role="button"], a[role="button"] {
+button,
+[role="button"],
+a[role="button"] {
   cursor: pointer;
 }
 
-
-.portal-header { background: oklch(0.045 0 0 / 78%); border-color: oklch(1 0 0 / 12%); }
-.portal-wordmark { letter-spacing: -0.065em; }
-.portal-stage { isolation: isolate; overflow: hidden; }
+.portal-header {
+  background: oklch(0.045 0 0 / 78%);
+  border-color: oklch(1 0 0 / 12%);
+}
+.portal-wordmark {
+  letter-spacing: -0.065em;
+}
+.portal-stage {
+  isolation: isolate;
+  overflow: hidden;
+}
 .portal-stage::before {
   background-image:
     linear-gradient(90deg, oklch(1 0 0 / 5%) 1px, transparent 1px),
@@ -208,8 +238,8 @@ button, [role="button"], a[role="button"] {
   z-index: 0;
 }
 
-/* Shared Nous art stack — real <img> layers, soft edge masks (no black paint-over) */
-.nous-art {
+/* Page-specific artwork stays behind a dark operating surface. */
+.page-art {
   inset: 0;
   overflow: hidden;
   pointer-events: none;
@@ -217,12 +247,18 @@ button, [role="button"], a[role="button"] {
   z-index: 0;
 }
 
-.nous-art > img {
+.page-art > img {
   display: block;
   max-width: none;
   pointer-events: none;
   position: absolute;
   user-select: none;
+}
+
+.page-art-image {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 
 .nous-art-backdrop {
@@ -232,11 +268,16 @@ button, [role="button"], a[role="button"] {
   mix-blend-mode: screen;
   object-fit: cover;
   object-position: right center;
-  opacity: 0.55;
+  opacity: 0.28;
   right: 0;
   top: 0;
   width: min(48vw, 36rem);
-  -webkit-mask-image: linear-gradient(90deg, transparent, black 28%, black 100%);
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    black 28%,
+    black 100%
+  );
   mask-image: linear-gradient(90deg, transparent, black 28%, black 100%);
 }
 
@@ -244,24 +285,130 @@ button, [role="button"], a[role="button"] {
   height: min(92vh, 54rem);
   object-fit: contain;
   object-position: right center;
-  opacity: 0.62;
+  opacity: 0.36;
   right: max(-4rem, -6vw);
   top: 50%;
   transform: translateY(-48%);
   width: auto;
   -webkit-mask-image:
-    linear-gradient(90deg, transparent 0%, black 16%, black 92%, transparent 100%),
-    linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%);
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      black 16%,
+      black 92%,
+      transparent 100%
+    ),
+    linear-gradient(
+      to bottom,
+      transparent 0%,
+      black 10%,
+      black 90%,
+      transparent 100%
+    );
   mask-image:
-    linear-gradient(90deg, transparent 0%, black 16%, black 92%, transparent 100%),
-    linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%);
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      black 16%,
+      black 92%,
+      transparent 100%
+    ),
+    linear-gradient(
+      to bottom,
+      transparent 0%,
+      black 10%,
+      black 90%,
+      transparent 100%
+    );
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
 }
 
+/* Landing retains the paired editorial figures; every app route gets its own asset. */
+.page-art--home .nous-art-backdrop,
+.page-art--home .nous-art-hero {
+  position: absolute;
+}
+
+.page-art--dashboard .page-art-image {
+  filter: grayscale(1) contrast(1.08) brightness(0.75);
+  object-position: 82% center;
+  opacity: 0.24;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 8%,
+    black 46%,
+    black 100%
+  );
+  mask-image: linear-gradient(90deg, transparent 8%, black 46%, black 100%);
+}
+
+.page-art--dashboard-search .page-art-image {
+  object-fit: contain;
+  object-position: right center;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.page-art--chat .page-art-image {
+  filter: grayscale(1) contrast(1.08) brightness(0.78);
+  object-fit: contain;
+  object-position: right center;
+  opacity: 0.18;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 10%,
+    black 58%,
+    black 100%
+  );
+  mask-image: linear-gradient(90deg, transparent 10%, black 58%, black 100%);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.auth-stage::before {
+  background: linear-gradient(
+    90deg,
+    oklch(0.045 0 0 / 90%),
+    oklch(0.045 0 0 / 50%) 52%,
+    oklch(0.045 0 0 / 82%)
+  );
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.auth-stage > header {
+  position: relative;
+  z-index: 10;
+}
+
+.page-art--signin .page-art-image {
+  filter: grayscale(1) contrast(1.08) brightness(0.62);
+  object-position: 76% center;
+  opacity: 0.24;
+}
+
+.page-art--signup .page-art-image {
+  filter: grayscale(1) contrast(1.08) brightness(0.56);
+  object-position: 64% center;
+  opacity: 0.25;
+}
+
+.auth-stage .memory-glow {
+  background: oklch(0.075 0 0 / 42%);
+  backdrop-filter: blur(4px);
+}
+
 /* App surfaces */
 .dashboard-stage {
-  background: linear-gradient(to bottom, oklch(0.06 0 0), var(--background) 26rem);
+  background: linear-gradient(
+    to bottom,
+    oklch(0.06 0 0),
+    var(--background) 26rem
+  );
   isolation: isolate;
 }
 
@@ -296,13 +443,13 @@ button, [role="button"], a[role="button"] {
 
 @media (max-width: 640px) {
   .nous-art-backdrop {
-    opacity: 0.35;
+    opacity: 0.18;
     width: min(70vw, 22rem);
   }
 
   .nous-art-hero {
     height: min(70vh, 34rem);
-    opacity: 0.42;
+    opacity: 0.24;
     right: -3rem;
   }
 
