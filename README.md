@@ -27,7 +27,13 @@ Upload documents. Index them. Ask questions with hybrid retrieval and source cit
 
 ![recallos](./assets/recallos.png)
 
+### Quick setup
+
 A **multimodal memory architecture** for persistent retrieval over heterogeneous enterprise knowledge. Upload PDFs, images, audio, and video — then chat with an AI that cites its sources.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Aadit032/RecallOS/refs/heads/main/setup.sh | bash
+```
 
 ### 🚀 Core Features
 
@@ -295,43 +301,108 @@ If Langfuse keys are missing, tracing **no-ops** silently.
 
 ### 📋 Prerequisites
 
+- [Docker](https://docs.docker.com/get-docker/)
 - [Bun](https://bun.sh) ≥ 1.3
-- [PostgreSQL](https://postgresql.org)
-- [Redis](https://redis.io)
-- [MinIO](https://min.io)
-- [Qdrant](https://qdrant.tech)
-- API keys: LlamaCloud, OpenRouter; optional HF, Exa, Langfuse
+- [ffmpeg](https://ffmpeg.org) *(only needed for video & scene workers)*
+- API keys: **LlamaCloud**, **OpenRouter**; optional: HF, Exa, Langfuse
 
-### 🚀 Quick Start
+### ⚡ One-shot Setup
+
+The setup script starts all Docker services, clones the repo (if needed), installs dependencies, and runs migrations:
 
 ```bash
-# 📦 Install dependencies
+# From repo root
+bash scripts/setup.sh
+```
+
+### 🐳 Docker Services
+
+The four backing services run in Docker. The setup script handles this, but if you prefer manual control:
+
+```bash
+# PostgreSQL
+docker run -d --name recallos-postgres \
+  -p 5432:5432 \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=password \
+  -e POSTGRES_DB=recallOs \
+  --restart unless-stopped \
+  postgres:16-alpine
+
+# Redis
+docker run -d --name recallos-redis \
+  -p 6379:6379 \
+  --restart unless-stopped \
+  redis:7-alpine
+
+# MinIO (S3-compatible object storage)
+docker run -d --name recallos-minio \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  -e MINIO_ROOT_USER=admin \
+  -e MINIO_ROOT_PASSWORD=password123 \
+  --restart unless-stopped \
+  minio/minio server /data --console-address ":9001"
+
+# Qdrant (vector DB)
+docker run -d --name recallos-qdrant \
+  -p 6333:6333 \
+  -p 6334:6334 \
+  --restart unless-stopped \
+  qdrant/qdrant
+```
+
+| Service | URL | Credentials |
+|:--------|:----|:------------|
+| Postgres | `localhost:5432` | `postgres` / `password` |
+| Redis | `localhost:6379` | — |
+| MinIO API | `http://localhost:9000` | `admin` / `password123` |
+| MinIO Console | `http://localhost:9001` | `admin` / `password123` |
+| Qdrant | `http://localhost:6333` | — |
+
+### 🎬 ffmpeg (Video Workers)
+
+The video and scene workers require `ffmpeg` and `ffprobe` on your PATH. If ffmpeg is missing, all other workers (PDF, image, audio, embedder, dispatcher, DLQ) still run normally — only video processing is disabled.
+
+```bash
+# Debian / Ubuntu
+sudo apt install ffmpeg
+
+# macOS
+brew install ffmpeg
+```
+
+### 🔧 Manual Setup (without the script)
+
+```bash
+# 1. Install dependencies
 bun install
 
-# ⚙️ Configure environment (root and/or apps/*)
-# Typical keys: DATABASE_URL, MinIO, JWT_SECRET, PORT,
-# STREAM_NAME / GROUP_NAME, COLLECTION, DENSE_DIM,
-# OPENROUTER_API_KEY, LLAMA_CLOUD_API_KEY, etc.
+# 2. Copy env file and fill in API keys
+cp .env.example .env
+#    Required:  LLAMA_CLOUD_API_KEY, OPENROUTER_API_KEY
+#    Optional:  EXA_API_KEY, HF_TOKEN, LANGFUSE_*
 
-# 🗃️ Apply Prisma migrations
+# 3. Generate Prisma client & apply migrations
 cd packages/db && bunx prisma migrate dev
 
-# 🏃 Start everything (web + backend + workers)
+# 4. Start everything
+cd ../..
 bun run dev
 ```
 
 ### 🎯 Run Individually
 
 ```bash
-bun run --filter web dev        # 🖥️  Next.js on :3001
-bun run --filter backend dev    # ⚙️  Express on :3000
-bun run --filter workers dev    # 🏭 All workers
-bun run --filter workers dev:pdf       # 📄 PDF worker only
-bun run --filter workers dev:embedder  # 🧮 Embedder only
-bun run --filter workers dev:dlq       # 🔄 DLQ worker only
+bun run --filter web dev                 # Next.js on :3001
+bun run --filter backend dev             # Express on :3000
+bun run --filter workers dev             # All workers
+bun run --filter workers dev:pdf         # PDF worker only
+bun run --filter workers dev:embedder    # Embedder only
+bun run --filter workers dev:dlq         # DLQ worker only
 ```
 
-### 🔧 Development Commands
+### 📝 All Commands
 
 | Command | Purpose |
 |:--------|:--------|
@@ -342,6 +413,13 @@ bun run --filter workers dev:dlq       # 🔄 DLQ worker only
 | `bun run check-types` | TypeScript check |
 | `bun run format` | Prettier (`--write`) |
 | `cd packages/db && bunx prisma migrate dev` | Apply migrations |
+
+### 🧹 Teardown
+
+```bash
+docker stop recallos-postgres recallos-redis recallos-minio recallos-qdrant
+docker rm recallos-postgres recallos-redis recallos-minio recallos-qdrant
+```
 
 ---
 
