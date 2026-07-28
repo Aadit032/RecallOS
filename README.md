@@ -27,10 +27,9 @@ Upload documents. Index them. Ask questions with hybrid retrieval and source cit
 
 ![recallos](./assets/recallos.png)
 
-### Quick setup
-
 A **multimodal memory architecture** for persistent retrieval over heterogeneous enterprise knowledge. Upload PDFs, images, audio, and video — then chat with an AI that cites its sources.
 
+### Quick setup
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Aadit032/RecallOS/refs/heads/main/scripts/setup.sh | bash
 ```
