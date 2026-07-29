@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -53,10 +53,29 @@ import { cn } from "@/lib/utils";
 
 type DashboardTab = "upload" | "search" | "chat";
 
+const MAX_BATCH_FILES = 20;
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isAcceptedUploadFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  if (file.type === "application/pdf" || name.endsWith(".pdf")) return true;
+  if (file.type.startsWith("image/")) return true;
+  if (file.type.startsWith("audio/")) return true;
+  if (file.type.startsWith("video/")) return true;
+  // Some browsers leave type empty for certain files — fall back to extension
+  if (/\.(png|jpe?g|gif|webp|bmp|svg|tiff?|mp3|wav|m4a|aac|ogg|flac|mp4|webm|mov|mkv|avi)$/i.test(name)) {
+    return true;
+  }
+  return false;
+}
+
+function fileKey(file: File): string {
+  return `${file.name}::${file.size}::${file.lastModified}`;
 }
 
 function formatDate(iso: string) {
@@ -267,7 +286,9 @@ export default function Dashboard() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<DashboardTab>("upload");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const filesRef = useRef(files);
+  filesRef.current = files;
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [uploadTags, setUploadTags] = useState<string[]>([]);
@@ -367,15 +388,43 @@ export default function Dashboard() {
     !searchQueryResult.isFetchingNextPage &&
     !searchQueryResult.data;
 
+  const batchCompletedRef = useRef(0);
+
   const uploadMutation = useMutation({
-    mutationFn: async ({ file, tags }: { file: File; tags: string[] }) =>
-      uploadDocument(file, tags, setStatus),
-    onSuccess: async () => {
-      setFile(null);
+    mutationFn: async ({
+      files: batch,
+      tags,
+    }: {
+      files: File[];
+      tags: string[];
+    }) => {
+      const total = batch.length;
+      batchCompletedRef.current = 0;
+      for (let i = 0; i < total; i++) {
+        const current = batch[i]!;
+        const progress =
+          total > 1 ? ` (${i + 1}/${total}: ${current.name})` : "";
+        await uploadDocument(current, tags, (step) =>
+          setStatus(`${step}${progress}`),
+        );
+        batchCompletedRef.current = i + 1;
+        // Drop successfully uploaded files so a partial failure leaves only retries
+        setFiles((prev) =>
+          prev.filter((f) => fileKey(f) !== fileKey(current)),
+        );
+      }
+      return { completed: total, total };
+    },
+    onSuccess: async (result) => {
+      setFiles([]);
       setUploadTags([]);
       setTagDraft("");
-      setStatus("Upload complete.");
-      // Force an immediate list refresh so the new doc appears without manual refresh
+      setStatus(
+        result.total > 1
+          ? `Upload complete. ${result.total} files submitted.`
+          : "Upload complete.",
+      );
+      // Force an immediate list refresh so new docs appear without manual refresh
       await queryClient.invalidateQueries({
         queryKey: queryKeys.documents.all,
       });
@@ -383,8 +432,24 @@ export default function Dashboard() {
         queryKey: queryKeys.documents.list(),
       });
     },
-    onError: () => {
-      setStatus("Upload failed.");
+    onError: async (err, variables) => {
+      const total = variables.files.length;
+      const completed = batchCompletedRef.current;
+      setStatus(
+        total > 1
+          ? completed > 0
+            ? `Uploaded ${completed} of ${total}, then failed. ${getErrorMessage(err, "Retry the remaining files.")}`
+            : `Upload failed. ${getErrorMessage(err, "Please try again.")}`
+          : "Upload failed.",
+      );
+      if (completed > 0) {
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.documents.all,
+        });
+        await queryClient.refetchQueries({
+          queryKey: queryKeys.documents.list(),
+        });
+      }
     },
   });
   const uploading = uploadMutation.isPending;
@@ -452,16 +517,19 @@ export default function Dashboard() {
     ? (deleteMutation.variables ?? null)
     : null;
 
+  // Preview the first selected file only (keeps UI simple for multi-select)
+  const previewFile = files.length === 1 ? files[0]! : null;
+
   useEffect(() => {
-    if (!file) {
+    if (!previewFile) {
       setPreviewUrl(null);
       return;
     }
 
-    const url = URL.createObjectURL(file);
+    const url = URL.createObjectURL(previewFile);
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [file]);
+  }, [previewFile]);
 
   const addTag = (raw: string) => {
     const parts = raw
@@ -488,21 +556,48 @@ export default function Dashboard() {
     setUploadTags((prev) => prev.filter((t) => t !== tag));
   };
 
-  const clearFile = () => {
-    setFile(null);
+  const clearFiles = () => {
+    setFiles([]);
     setStatus("");
     setUploadTags([]);
     setTagDraft("");
   };
 
-  const pickFile = (selected: File | null | undefined) => {
+  const removeFileAt = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
     setStatus("");
-    setFile(selected ?? null);
+  };
+
+  const pickFiles = (selected: FileList | File[] | null | undefined) => {
+    if (!selected) return;
+    const incoming = Array.from(selected).filter(isAcceptedUploadFile);
+    if (incoming.length === 0) {
+      setStatus("Only PDF, image, audio, and video files are supported.");
+      return;
+    }
+
+    const prev = filesRef.current;
+    const seen = new Set(prev.map(fileKey));
+    const next = [...prev];
+    let hitCap = false;
+    for (const f of incoming) {
+      if (next.length >= MAX_BATCH_FILES) {
+        hitCap = true;
+        break;
+      }
+      const key = fileKey(f);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      next.push(f);
+    }
+
+    setFiles(next);
+    setStatus(hitCap ? `Up to ${MAX_BATCH_FILES} files per batch.` : "");
   };
 
   const handleUpload = () => {
-    if (!file || uploading) return;
-    uploadMutation.mutate({ file, tags: uploadTags });
+    if (files.length === 0 || uploading) return;
+    uploadMutation.mutate({ files, tags: uploadTags });
   };
 
   const runSearch = () => {
@@ -540,11 +635,12 @@ export default function Dashboard() {
   };
 
   const isPdf =
-    file?.type === "application/pdf" ||
-    file?.name.toLowerCase().endsWith(".pdf");
-  const isImage = Boolean(file?.type.startsWith("image/"));
-  const isAudio = Boolean(file?.type.startsWith("audio/"));
-  const isVideo = Boolean(file?.type.startsWith("video/"));
+    previewFile?.type === "application/pdf" ||
+    Boolean(previewFile?.name.toLowerCase().endsWith(".pdf"));
+  const isImage = Boolean(previewFile?.type.startsWith("image/"));
+  const isAudio = Boolean(previewFile?.type.startsWith("audio/"));
+  const isVideo = Boolean(previewFile?.type.startsWith("video/"));
+  const totalSelectedBytes = files.reduce((sum, f) => sum + f.size, 0);
 
   const readyCount = documents.filter((d) => d.status === "READY").length;
 
@@ -691,11 +787,12 @@ export default function Dashboard() {
               <section className="space-y-6 lg:col-span-3">
                 <div className="space-y-1.5">
                   <h2 className="font-display text-2xl font-medium tracking-tight">
-                    Upload a document
+                    Upload documents
                   </h2>
                   <p className="text-base text-muted-foreground">
-                    PDFs, images, audio, and video. Bytes go straight to storage
-                    via presigned URL. Tags improve retrieval.
+                    PDFs, images, audio, and video — one or many at a time.
+                    Bytes go straight to storage via presigned URL. Tags apply
+                    to every file in the batch.
                   </p>
                 </div>
 
@@ -717,80 +814,121 @@ export default function Dashboard() {
                   onDrop={(e) => {
                     e.preventDefault();
                     setDragOver(false);
-                    const dropped = e.dataTransfer.files?.[0];
-                    if (dropped) pickFile(dropped);
+                    pickFiles(e.dataTransfer.files);
                   }}
                   className={cn(
                     "group relative flex cursor-pointer flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-all",
                     dragOver
                       ? "border-primary bg-primary/5 shadow-inner"
                       : "border-border/80 bg-card/40 hover:border-primary/40 hover:bg-card/70",
-                    file && "border-solid border-border/70 bg-card/60 py-6",
+                    files.length > 0 &&
+                      "border-solid border-border/70 bg-card/60 py-6",
                   )}
                 >
                   <div className="archive-grid pointer-events-none absolute inset-0 opacity-20" />
-                  {!file ? (
+                  {files.length === 0 ? (
                     <>
                       <span className="relative flex size-14 items-center justify-center rounded-2xl border border-border/80 bg-background/80 shadow-sm">
                         <Upload className="size-6 text-muted-foreground transition-colors group-hover:text-foreground" />
                       </span>
                       <div className="relative space-y-1">
                         <p className="text-base font-medium tracking-tight">
-                          Drop a file here, or{" "}
+                          Drop files here, or{" "}
                           <span className="text-foreground underline decoration-border underline-offset-4">
                             browse
                           </span>
                         </p>
                         <p className="text-sm text-muted-foreground">
-                          PDF · image · audio · video
+                          PDF · image · audio · video — up to {MAX_BATCH_FILES}{" "}
+                          files
                         </p>
                       </div>
                     </>
                   ) : (
-                    <div className="relative flex w-full items-start justify-between gap-3 text-left">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/8">
-                          <FileText className="size-5 text-muted-foreground" />
-                        </span>
+                    <div className="relative w-full space-y-3 text-left">
+                      <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate font-semibold">{file.name}</p>
+                          <p className="font-semibold">
+                            {files.length} file{files.length === 1 ? "" : "s"}{" "}
+                            selected
+                          </p>
                           <p className="text-sm text-muted-foreground">
-                            {formatBytes(file.size)}
-                            {file.type ? ` · ${file.type}` : ""}
+                            {formatBytes(totalSelectedBytes)} total · drop or
+                            browse to add more
                           </p>
                         </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="relative z-10 shrink-0"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            clearFiles();
+                          }}
+                        >
+                          Clear all
+                        </Button>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="relative z-10 shrink-0"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          clearFile();
-                        }}
-                        aria-label="Remove selected file"
-                      >
-                        <X className="size-4" />
-                      </Button>
+                      <ul className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                        {files.map((f, index) => (
+                          <li
+                            key={fileKey(f)}
+                            className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/70 px-3 py-2"
+                          >
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/15 bg-primary/8">
+                                <FileText className="size-4 text-muted-foreground" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">
+                                  {f.name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatBytes(f.size)}
+                                  {f.type ? ` · ${f.type}` : ""}
+                                </p>
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="relative z-10 shrink-0"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                removeFileAt(index);
+                              }}
+                              aria-label={`Remove ${f.name}`}
+                            >
+                              <X className="size-4" />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                   <input
                     id="file"
                     type="file"
+                    multiple
                     accept=".pdf,application/pdf,image/*,audio/*,video/*"
                     className="sr-only"
-                    onChange={(e) => pickFile(e.target.files?.[0])}
+                    onChange={(e) => {
+                      pickFiles(e.target.files);
+                      e.target.value = "";
+                    }}
                   />
                 </label>
 
-                {/* Preview */}
-                {file && previewUrl && (
+                {/* Preview (single-file selection only) */}
+                {previewFile && previewUrl && (
                   <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/50">
                     {isPdf ? (
                       <iframe
-                        title={`Preview of ${file.name}`}
+                        title={`Preview of ${previewFile.name}`}
                         src={previewUrl}
                         className="h-[26rem] w-full border-0 bg-muted/20"
                       />
@@ -799,7 +937,7 @@ export default function Dashboard() {
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={previewUrl}
-                          alt={`Preview of ${file.name}`}
+                          alt={`Preview of ${previewFile.name}`}
                           className="max-h-[24rem] max-w-full rounded-lg object-contain"
                         />
                       </div>
@@ -891,7 +1029,7 @@ export default function Dashboard() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     onClick={handleUpload}
-                    disabled={!file || uploading}
+                    disabled={files.length === 0 || uploading}
                     className="h-11 px-6 text-base font-semibold"
                   >
                     {uploading ? (
@@ -902,7 +1040,9 @@ export default function Dashboard() {
                     ) : (
                       <>
                         <Upload className="size-4" />
-                        Submit file
+                        {files.length > 1
+                          ? `Submit ${files.length} files`
+                          : "Submit file"}
                       </>
                     )}
                   </Button>
@@ -912,7 +1052,7 @@ export default function Dashboard() {
                         "text-sm font-medium",
                         status.toLowerCase().includes("failed")
                           ? "text-destructive"
-                          : status === "Upload complete."
+                          : status.startsWith("Upload complete")
                             ? "text-emerald-600 dark:text-emerald-400"
                             : "text-muted-foreground",
                       )}
@@ -931,7 +1071,7 @@ export default function Dashboard() {
                   Pipeline
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  What happens once the file lands.
+                  What happens once files land.
                 </p>
                 <ol className="mt-7 space-y-0">
                   {pipeline.map((item, index) => (
@@ -1020,7 +1160,7 @@ export default function Dashboard() {
                     No documents yet
                   </p>
                   <p className="mt-2 text-base text-muted-foreground">
-                    Drop a file above to start building memory.
+                    Drop files above to start building memory.
                   </p>
                 </div>
               )}
