@@ -1,6 +1,8 @@
 /**
  * Agentic multi-hop RAG over the user's document memory.
  * Plan sub-queries → hybrid retrieve → reason sufficiency → re-retrieve → answer.
+ *
+ * Node names must not collide with state channel keys (query, answer, …).
  */
 import { Annotation, START, END, StateGraph } from "@langchain/langgraph";
 import { ChatOpenRouter } from "@langchain/openrouter";
@@ -75,14 +77,7 @@ const AgentState = Annotation.Root({
         default: () => "",
     }),
     chunks: Annotation<RetrievedChunk[]>({
-        reducer: (state, update) => {
-            const map = new Map<string, RetrievedChunk>();
-            for (const c of [...state, ...update]) {
-                const prev = map.get(c.id);
-                if (!prev || c.score > prev.score) map.set(c.id, c);
-            }
-            return Array.from(map.values()).sort((a, b) => b.score - a.score);
-        },
+        reducer: (state, update) => mergeChunks(state, update),
         default: () => [],
     }),
     answer: Annotation<string>({
@@ -102,6 +97,34 @@ const AgentState = Annotation.Root({
         default: () => [],
     }),
 });
+
+function mergeChunks(
+    state: RetrievedChunk[],
+    update: RetrievedChunk[]
+): RetrievedChunk[] {
+    const map = new Map<string, RetrievedChunk>();
+    for (const c of [...state, ...update]) {
+        const prev = map.get(c.id);
+        if (!prev || c.score > prev.score) map.set(c.id, c);
+    }
+    return Array.from(map.values()).sort((a, b) => b.score - a.score);
+}
+
+function messageText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part) => {
+                if (typeof part === "string") return part;
+                if (part && typeof part === "object" && "text" in part) {
+                    return String((part as { text?: unknown }).text ?? "");
+                }
+                return "";
+            })
+            .join("");
+    }
+    return String(content ?? "");
+}
 
 function formatChunks(chunks: RetrievedChunk[]): string {
     if (chunks.length === 0) return "(no chunks yet)";
@@ -124,20 +147,18 @@ function formatChunks(chunks: RetrievedChunk[]): string {
 }
 
 async function planNode(state: typeof AgentState.State) {
+    console.log(`[memoryAgent:plan] query="${state.query.slice(0, 120)}"`);
     const structured = llm.withStructuredOutput(HopDecisionSchema);
-    const result = await structured.invoke([
-        {
-            role: "system",
-            content: `You plan multi-hop retrieval over a private document library.
-Given a user question, propose 1-3 short search sub-queries that together cover the question.
-Set enoughInformation=false always at plan stage. Put the primary query in nextSearchQuery.
-subQueries: additional follow-up retrieval queries.`,
-        },
-        {
-            role: "user",
-            content: `Question: ${state.query}`,
-        },
-    ]);
+    const result = (await structured.invoke(`
+        You plan multi-hop retrieval over a private document library.
+        Given a user question, propose 1-3 short search sub-queries that together cover the question.
+        Set enoughInformation=false always at plan stage.
+        Put the primary query in nextSearchQuery.
+        subQueries: additional follow-up retrieval queries.
+
+        Question:
+        ${state.query}
+    `)) as HopDecision;
 
     const queries = [
         result.nextSearchQuery?.trim() || state.query,
@@ -153,7 +174,11 @@ subQueries: additional follow-up retrieval queries.`,
 }
 
 async function retrieveNode(state: typeof AgentState.State) {
-    const q = state.nextSearchQuery || state.query;
+    const q = (state.nextSearchQuery || state.query).trim() || state.query;
+    console.log(
+        `[memoryAgent:retrieve] hop=${state.iteration + 1} query="${q.slice(0, 120)}"`
+    );
+
     const raw = await hybridRetrieve(state.userId, q, {
         limit: 40,
         modality: state.modality,
@@ -177,6 +202,8 @@ async function retrieveNode(state: typeof AgentState.State) {
             id: r.id,
         };
     });
+
+    console.log(`[memoryAgent:retrieve] got ${hopChunks.length} chunks (raw=${raw.length})`);
     return {
         chunks: hopChunks,
         iteration: state.iteration + 1,
@@ -184,78 +211,83 @@ async function retrieveNode(state: typeof AgentState.State) {
 }
 
 async function reasonNode(state: typeof AgentState.State) {
+    console.log(
+        `[memoryAgent:reason] judging ${state.chunks.length} chunks (hop ${state.iteration}/${MAX_HOPS})`
+    );
     const structured = llm.withStructuredOutput(HopDecisionSchema);
-    const result = await structured.invoke([
-        {
-            role: "system",
-            content: `You are a retrieval critic for multi-hop RAG.
-Decide if the accumulated chunks are enough to answer the user accurately with citations.
-If not, propose nextSearchQuery that targets the missing information.
-Do not invent facts. Max hops will stop you eventually.`,
-        },
-        {
-            role: "user",
-            content: `Original question: ${state.query}
+    const result = (await structured.invoke(`
+        You are a retrieval critic for multi-hop RAG.
+        Decide if the accumulated chunks are enough to answer the user accurately with citations.
+        If not, propose nextSearchQuery that targets the missing information.
+        Do not invent facts. Max hops will stop you eventually.
 
-Hop: ${state.iteration}/${MAX_HOPS}
+        Original question:
+        ${state.query}
 
-Accumulated chunks:
-${formatChunks(state.chunks)}
+        Hop: ${state.iteration}/${MAX_HOPS}
 
-Is this enough? If not, what should we search next?`,
-        },
-    ]);
-    return { decision: result, nextSearchQuery: result.nextSearchQuery || state.query };
+        Accumulated chunks:
+        ${formatChunks(state.chunks)}
+
+        Is this enough? If not, what should we search next?
+    `)) as HopDecision;
+
+    console.log(
+        `[memoryAgent:reason] enough=${result.enoughInformation} next="${(result.nextSearchQuery ?? "").slice(0, 80)}"`
+    );
+
+    return {
+        decision: result,
+        nextSearchQuery: result.enoughInformation
+            ? state.nextSearchQuery || state.query
+            : (result.nextSearchQuery || state.query).trim(),
+    };
 }
 
-async function answerNode(state: typeof AgentState.State) {
+async function writeAnswerNode(state: typeof AgentState.State) {
     const top = state.chunks.slice(0, FINAL_TOP_K);
-    const response = await llm.invoke([
-        {
-            role: "system",
-            content: `You are RecallOS. Answer using ONLY the provided chunks.
-Cite sources inline as [1], [2] matching chunk ranks.
-When a chunk has page or timestamp metadata, mention it (e.g. "p.3" or "at 1:24").
-If insufficient, say what is missing. Be concise and accurate.`,
-        },
-        {
-            role: "user",
-            content: `Question: ${state.query}
+    console.log(`[memoryAgent:write_answer] synthesizing from ${top.length} chunks`);
+    const response = await llm.invoke(`
+        You are RecallOS. Answer using ONLY the provided chunks.
+        Cite sources inline as [1], [2] matching chunk ranks.
+        When a chunk has page or timestamp metadata, mention it (e.g. "p.3" or "at 1:24").
+        If insufficient, say what is missing. Be concise and accurate.
 
-Chunks:
-${formatChunks(top)}`,
-        },
-    ]);
-    const content = response.content;
-    const answer =
-        typeof content === "string"
-            ? content
-            : Array.isArray(content)
-              ? content.map((p) => (typeof p === "string" ? p : (p as { text?: string }).text ?? "")).join("")
-              : String(content ?? "");
-    return { answer };
+        Question:
+        ${state.query}
+
+        Chunks:
+        ${formatChunks(top)}
+    `);
+    return { answer: messageText(response.content) };
 }
 
-function shouldContinue(state: typeof AgentState.State): "retrieve" | "answer" {
-    if (state.iteration >= MAX_HOPS) return "answer";
-    if (state.decision?.enoughInformation) return "answer";
-    if (!state.decision?.nextSearchQuery?.trim()) return "answer";
-    return "retrieve";
+function routeAfterReason(
+    state: typeof AgentState.State
+): "do_retrieve" | "write_answer" {
+    if (state.iteration >= MAX_HOPS) return "write_answer";
+    if (state.decision?.enoughInformation) return "write_answer";
+    if (!state.decision?.nextSearchQuery?.trim()) return "write_answer";
+    return "do_retrieve";
 }
 
+/**
+ *   START → plan → do_retrieve → reason ─┬─(enough / max hops)→ write_answer → END
+ *                                         └─(need more)─────────→ do_retrieve ↺
+ */
 const memoryGraph = new StateGraph(AgentState)
     .addNode("plan", planNode)
-    .addNode("retrieve", retrieveNode)
+    .addNode("do_retrieve", retrieveNode)
     .addNode("reason", reasonNode)
-    .addNode("answer", answerNode)
+    .addNode("write_answer", writeAnswerNode)
     .addEdge(START, "plan")
-    .addEdge("plan", "retrieve")
-    .addEdge("retrieve", "reason")
-    .addConditionalEdges("reason", shouldContinue, {
-        retrieve: "retrieve",
-        answer: "answer",
+    .addEdge("plan", "do_retrieve")
+    .addEdge("do_retrieve", "reason")
+    .addConditionalEdges("reason", routeAfterReason, {
+        do_retrieve: "do_retrieve",
+        write_answer: "write_answer",
     })
-    .addEdge("answer", END)
+    .addEdge("write_answer", END)
     .compile();
 
 export type RunMemoryAgentOptions = {
@@ -276,12 +308,27 @@ export async function runMemoryAgent(
     tokenUsage: TokenUsageSummary;
     hops: number;
 }> {
+    const q = query.trim();
+    if (!q) {
+        return {
+            answer: "Please provide a query after /agent.",
+            sources: [],
+            chunks: [],
+            tokenUsage: emptyTokenUsage(),
+            hops: 0,
+        };
+    }
+
     return startActiveObservation(
         "memory-agent",
         async (span) => {
             span.update({
-                input: { query: truncateForTrace(query, 500) },
-                metadata: { modality: options.modality ?? null },
+                input: { query: truncateForTrace(q, 500) },
+                metadata: {
+                    model: CHAT_MODEL,
+                    modality: options.modality ?? null,
+                    maxHops: MAX_HOPS,
+                },
             });
 
             const emit = async (event: MemoryAgentProgressEvent) => {
@@ -296,59 +343,76 @@ export async function runMemoryAgent(
                 type: "step",
                 step: "start",
                 title: "Starting multi-hop memory agent…",
-                query,
+                query: q,
+            });
+
+            const { handler: langfuseHandler, getTokenUsage } = createLangChainHandler({
+                userId: options.userId,
+                sessionId: options.sessionId,
+                tags: ["memory-agent", "multi-hop", "langgraph", ...(options.tags ?? [])],
+                traceMetadata: { model: CHAT_MODEL },
             });
 
             let hops = 0;
-            let finalState: typeof AgentState.State | null = null;
-            let tokenUsage: TokenUsageSummary = emptyTokenUsage();
-
-            const handler = createLangChainHandler();
+            let answer = "";
+            let accumulatedChunks: RetrievedChunk[] = [];
+            let activeQuery = q;
 
             const stream = await memoryGraph.stream(
                 {
-                    query,
+                    query: q,
                     userId: options.userId,
                     modality: options.modality,
-                    nextSearchQuery: query,
+                    nextSearchQuery: q,
                 },
                 {
-                    callbacks: handler ? [handler] : undefined,
-                    tags: ["memory-agent", "multi-hop", ...(options.tags ?? [])],
-                    metadata: {
-                        userId: options.userId,
-                        sessionId: options.sessionId,
-                    },
+                    streamMode: "updates",
+                    callbacks: [langfuseHandler],
                 }
             );
 
             for await (const update of stream) {
                 if (update.plan) {
+                    const planned =
+                        (update.plan.plannedQueries as string[] | undefined) ?? [];
+                    if (typeof update.plan.nextSearchQuery === "string") {
+                        activeQuery = update.plan.nextSearchQuery;
+                    }
                     await emit({
                         type: "step",
                         step: "plan",
                         title: "Planned retrieval hops",
-                        detail: (update.plan.plannedQueries as string[] | undefined)?.join(" · "),
-                        query: update.plan.nextSearchQuery as string | undefined,
+                        detail: planned.join(" · ") || activeQuery,
+                        query: activeQuery,
                         reasoning: (update.plan.decision as HopDecision | null)?.reasoning,
                     });
                 }
-                if (update.retrieve) {
-                    hops = (update.retrieve.iteration as number) ?? hops + 1;
-                    const chunkCount = Array.isArray(update.retrieve.chunks)
-                        ? update.retrieve.chunks.length
-                        : 0;
+
+                if (update.do_retrieve) {
+                    hops =
+                        typeof update.do_retrieve.iteration === "number"
+                            ? update.do_retrieve.iteration
+                            : hops + 1;
+                    const batch = Array.isArray(update.do_retrieve.chunks)
+                        ? (update.do_retrieve.chunks as RetrievedChunk[])
+                        : [];
+                    accumulatedChunks = mergeChunks(accumulatedChunks, batch);
                     await emit({
                         type: "step",
                         step: "retrieve",
                         title: `Retrieved hop ${hops}`,
-                        resultCount: chunkCount,
+                        resultCount: batch.length,
                         iteration: hops,
-                        query: query,
+                        query: activeQuery,
+                        detail: `${accumulatedChunks.length} unique chunks so far`,
                     });
                 }
+
                 if (update.reason) {
-                    const d = update.reason.decision as HopDecision | null;
+                    const d = update.reason.decision as HopDecision | null | undefined;
+                    if (typeof update.reason.nextSearchQuery === "string") {
+                        activeQuery = update.reason.nextSearchQuery;
+                    }
                     await emit({
                         type: "step",
                         step: "reason",
@@ -361,49 +425,20 @@ export async function runMemoryAgent(
                         iteration: hops,
                     });
                 }
-                if (update.answer) {
+
+                if (update.write_answer) {
                     await emit({
                         type: "step",
                         step: "answer",
                         title: "Composing grounded answer…",
                     });
-                    finalState = {
-                        ...(finalState ?? {}),
-                        ...update.answer,
-                    } as typeof AgentState.State;
+                    if (typeof update.write_answer.answer === "string") {
+                        answer = update.write_answer.answer;
+                    }
                 }
-                // Accumulate full state pieces
-                finalState = {
-                    ...(finalState ?? {
-                        query,
-                        userId: options.userId,
-                        chunks: [],
-                        answer: "",
-                        decision: null,
-                        iteration: 0,
-                        plannedQueries: [],
-                        nextSearchQuery: query,
-                    }),
-                    ...(update.plan ?? {}),
-                    ...(update.retrieve ?? {}),
-                    ...(update.reason ?? {}),
-                    ...(update.answer ?? {}),
-                } as typeof AgentState.State;
             }
 
-            // Final invoke if stream didn't assemble answer
-            if (!finalState?.answer) {
-                const result = await memoryGraph.invoke({
-                    query,
-                    userId: options.userId,
-                    modality: options.modality,
-                    nextSearchQuery: query,
-                });
-                finalState = result;
-                hops = result.iteration ?? hops;
-            }
-
-            const topChunks = (finalState.chunks ?? []).slice(0, FINAL_TOP_K);
+            const topChunks = accumulatedChunks.slice(0, FINAL_TOP_K);
             const sources: GroundedSource[] = topChunks.map((c, i) => ({
                 rank: i + 1,
                 id: c.id,
@@ -426,16 +461,18 @@ export async function runMemoryAgent(
                 iteration: hops,
             });
 
+            const tokenUsage = getTokenUsage();
             span.update({
                 output: {
                     hops,
                     sourceCount: sources.length,
-                    answer: truncateForTrace(finalState.answer ?? "", 2000),
+                    answer: truncateForTrace(answer, 2000),
                 },
+                metadata: { model: CHAT_MODEL },
             });
 
             return {
-                answer: finalState.answer || "I couldn't find enough information in your library.",
+                answer: answer || "I couldn't find enough information in your library.",
                 sources,
                 chunks: topChunks,
                 tokenUsage,
