@@ -20,12 +20,16 @@ pip install -r requirements.txt
 Load the monorepo root `.env` (or copy it). Apply Prisma migrations first so
 tables like `Memory`, `Connector`, and `Session` exist.
 
-## Run
+## Run (opt-in — not started by monorepo `bun run dev`)
+
+The FastAPI app is **disabled by default**. Express (`apps/backend`) is the
+active API. Only start this when you intentionally want the Python port:
 
 ```bash
-# from apps/api, PORT defaults to 3000
-bun run dev
-# or
+# from repo root
+bun run --filter api dev:fastapi
+
+# or from apps/api
 uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 

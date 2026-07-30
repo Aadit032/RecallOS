@@ -8,8 +8,8 @@
 | `bun run dev` | Start all apps via Turborepo |
 | `bun run --filter web dev` | Next.js 16 on port 3001 |
 | `bun run --filter backend dev` | Express 5 on port 3000 (Node + Better Auth) |
-| `bun run --filter api dev` | FastAPI Python port on port 3000 (`apps/api`) |
 | `bun run --filter workers dev` | All workers concurrently |
+| `bun run --filter api dev:fastapi` | Optional FastAPI port (`apps/api`) — not started by `bun run dev` |
 | `bun run --filter workers dev:<worker>` | Single worker (e.g. `dev:pdf`, `dev:embedder`, `dev:dlq`) |
 | `cd packages/db && bunx prisma migrate dev` | Apply Prisma migrations |
 | `bun run lint` | ESLint via turbo (web only has `--max-warnings 0`) |
@@ -34,7 +34,7 @@ import { someExport } from "@repo/qdrant/client";
 
 ## Architecture notes
 
-- **Backend is Express 5** (`apps/backend`) — NOT `Bun.serve()`. A full **FastAPI port** lives in `apps/api` (same `/api/v1` surface). Prefer one process on port 3000; if FastAPI is primary, set `AUTH_PROXY_URL` to a Node Better Auth sidecar.
+- **Backend is Express 5** (`apps/backend`) — NOT `Bun.serve()`. A FastAPI port lives in `apps/api` but is **opt-in only** (`dev:fastapi` / `start:fastapi`); `bun run dev` does not start it.
 - **Chat modes**: default hybrid RAG, `/web` Exa agent, `/agent` multi-hop library agent.
 - **Long-term memory**: `Memory` model auto-filled after chats; injected into system prompts.
 - **Connectors**: URL/RSS/GitHub continuous sync via `/api/v1/connectors` + background poll.

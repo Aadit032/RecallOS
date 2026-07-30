@@ -2,8 +2,8 @@
   "name": "api",
   "private": true,
   "scripts": {
-    "dev": "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000} --reload --app-dir .",
-    "start": "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000} --app-dir .",
+    "dev:fastapi": "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000} --reload --app-dir .",
+    "start:fastapi": "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000} --app-dir .",
     "install:py": "pip install -r requirements.txt"
   }
 }
