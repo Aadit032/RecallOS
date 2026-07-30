@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
@@ -15,6 +16,7 @@ import {
   FileText,
   Film,
   ImageIcon,
+  Link2,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -48,6 +50,14 @@ import {
   type DocumentItem,
 } from "@/lib/api/documents";
 import { searchDocuments } from "@/lib/api/search";
+import {
+  createConnector,
+  deleteConnector,
+  fetchConnectors,
+  syncConnector,
+  type Connector,
+  type ConnectorType,
+} from "@/lib/api/connectors";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
@@ -146,8 +156,11 @@ function modalityIcon(modality?: string | null) {
   }
 }
 
-function scorePercent(score: number) {
-  // RRF + tag boost typically lands roughly 0–0.8; map to a soft bar.
+function scorePercent(score: number, confidence?: number) {
+  if (typeof confidence === "number" && Number.isFinite(confidence)) {
+    return Math.max(4, Math.min(100, Math.round(confidence)));
+  }
+  // Fallback: RRF + tag boost typically lands roughly 0–0.8
   return Math.max(4, Math.min(100, Math.round(score * 120)));
 }
 
@@ -304,6 +317,57 @@ export default function Dashboard() {
     query: string;
     modality: string;
   } | null>(null);
+  /** In-search preview of a matched document excerpt */
+  const [previewDoc, setPreviewDoc] = useState<
+    import("@/lib/api/search").SearchResult | null
+  >(null);
+
+  // External connectors
+  const [connectorType, setConnectorType] = useState<ConnectorType>("url");
+  const [connectorName, setConnectorName] = useState("");
+  const [connectorUrl, setConnectorUrl] = useState("");
+  const [connectorRepo, setConnectorRepo] = useState("");
+  const [syncingConnectorId, setSyncingConnectorId] = useState<string | null>(
+    null,
+  );
+
+  const connectorsQuery = useQuery({
+    queryKey: queryKeys.connectors.list(),
+    queryFn: fetchConnectors,
+    enabled: activeTab === "upload",
+    staleTime: 10_000,
+  });
+  const connectors: Connector[] = connectorsQuery.data ?? [];
+
+  const createConnectorMutation = useMutation({
+    mutationFn: async () => {
+      const name =
+        connectorName.trim() ||
+        (connectorType === "github"
+          ? connectorRepo.trim() || "GitHub"
+          : connectorUrl.trim() || "Connector");
+      const config: Record<string, unknown> =
+        connectorType === "github"
+          ? { repo: connectorRepo.trim() }
+          : connectorType === "rss"
+            ? { feedUrl: connectorUrl.trim() }
+            : { url: connectorUrl.trim() };
+      return createConnector({
+        type: connectorType,
+        name,
+        config,
+        syncInterval: 30,
+      });
+    },
+    onSuccess: async () => {
+      setConnectorName("");
+      setConnectorUrl("");
+      setConnectorRepo("");
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.connectors.all,
+      });
+    },
+  });
 
   const documentsQuery = useInfiniteQuery({
     queryKey: queryKeys.documents.list(),
@@ -660,6 +724,10 @@ export default function Dashboard() {
           }
           alt=""
         />
+        {/* Extra dim overlay on upload so Athena stays subdued behind the form */}
+        {activeTab === "upload" && (
+          <div className="absolute inset-0 bg-background/55" />
+        )}
       </div>
       <header className="sticky top-0 z-50 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
@@ -1102,6 +1170,173 @@ export default function Dashboard() {
               </aside>
             </div>
 
+            {/* External connectors */}
+            <section className="mt-16 space-y-5 border-t border-border/70 pt-12">
+              <div>
+                <p className="mb-1.5 font-mono text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                  Continuous sync
+                </p>
+                <h2 className="font-display text-3xl font-medium tracking-tight">
+                  Connectors
+                </h2>
+                <p className="mt-1 max-w-xl text-base text-muted-foreground">
+                  Pull external knowledge on a schedule (URL, RSS, GitHub) into
+                  the same hybrid index.
+                </p>
+              </div>
+
+              <div className="memory-glow space-y-4 rounded-2xl border border-border/80 bg-card/80 p-5">
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ["url", "Web page"],
+                      ["rss", "RSS feed"],
+                      ["github", "GitHub repo"],
+                      ["notion", "Notion URL"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setConnectorType(value)}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                        connectorType === value
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border/80 bg-background/50 text-muted-foreground hover:bg-muted",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="connector-name">Name</Label>
+                    <Input
+                      id="connector-name"
+                      value={connectorName}
+                      onChange={(e) => setConnectorName(e.target.value)}
+                      placeholder="Optional display name"
+                    />
+                  </div>
+                  {connectorType === "github" ? (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="connector-repo">Repository</Label>
+                      <Input
+                        id="connector-repo"
+                        value={connectorRepo}
+                        onChange={(e) => setConnectorRepo(e.target.value)}
+                        placeholder="owner/repo"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="connector-url">
+                        {connectorType === "rss" ? "Feed URL" : "URL"}
+                      </Label>
+                      <Input
+                        id="connector-url"
+                        value={connectorUrl}
+                        onChange={(e) => setConnectorUrl(e.target.value)}
+                        placeholder="https://…"
+                      />
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  disabled={
+                    createConnectorMutation.isPending ||
+                    (connectorType === "github"
+                      ? !connectorRepo.trim()
+                      : !connectorUrl.trim())
+                  }
+                  onClick={() => createConnectorMutation.mutate()}
+                >
+                  {createConnectorMutation.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Link2 className="size-4" />
+                  )}
+                  Add connector
+                </Button>
+                {createConnectorMutation.isError && (
+                  <p className="text-sm text-destructive">
+                    {getErrorMessage(
+                      createConnectorMutation.error,
+                      "Failed to create connector",
+                    )}
+                  </p>
+                )}
+              </div>
+
+              {connectorsQuery.isLoading && (
+                <p className="text-sm text-muted-foreground">Loading connectors…</p>
+              )}
+              {connectors.length > 0 && (
+                <ul className="space-y-2">
+                  {connectors.map((c) => (
+                    <li
+                      key={c.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card/60 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{c.name}</p>
+                        <p className="font-mono text-[11px] text-muted-foreground">
+                          {c.type} · {c.status}
+                          {c.lastSyncedAt
+                            ? ` · last sync ${new Date(c.lastSyncedAt).toLocaleString()}`
+                            : " · never synced"}
+                          {c.lastError ? ` · ${c.lastError}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={syncingConnectorId === c.id}
+                          onClick={async () => {
+                            setSyncingConnectorId(c.id);
+                            try {
+                              await syncConnector(c.id);
+                              await queryClient.invalidateQueries({
+                                queryKey: queryKeys.connectors.all,
+                              });
+                              await queryClient.invalidateQueries({
+                                queryKey: queryKeys.documents.all,
+                              });
+                            } finally {
+                              setSyncingConnectorId(null);
+                            }
+                          }}
+                        >
+                          {syncingConnectorId === c.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="size-3.5" />
+                          )}
+                          Sync
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={async () => {
+                            await deleteConnector(c.id);
+                            await queryClient.invalidateQueries({
+                              queryKey: queryKeys.connectors.all,
+                            });
+                          }}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             {/* Documents library — upload section only */}
             <section className="mt-16 space-y-6 border-t border-border/70 pt-12">
               <div className="flex flex-wrap items-end justify-between gap-3">
@@ -1489,7 +1724,11 @@ export default function Dashboard() {
                   <ul className="space-y-3">
                     {searchResults.map((doc, idx) => {
                       const Icon = modalityIcon(doc.modality);
-                      const pct = scorePercent(doc.score);
+                      const confidence =
+                        typeof doc.confidence === "number"
+                          ? doc.confidence
+                          : scorePercent(doc.score);
+                      const pct = scorePercent(doc.score, confidence);
                       return (
                         <li
                           key={`${doc.id}-${idx}`}
@@ -1513,6 +1752,12 @@ export default function Dashboard() {
                                       {doc.modality}
                                     </Badge>
                                   )}
+                                  <Badge
+                                    variant="secondary"
+                                    className="font-mono text-[10px] tabular-nums"
+                                  >
+                                    {pct}% match
+                                  </Badge>
                                 </div>
                                 {doc.snippet && (
                                   <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground">
@@ -1535,17 +1780,28 @@ export default function Dashboard() {
                                 <div className="flex items-center gap-2.5 pt-0.5">
                                   <div className="h-1.5 max-w-[7rem] flex-1 overflow-hidden rounded-full bg-muted">
                                     <div
-                                      className="h-full rounded-full bg-foreground/70 transition-all"
+                                      className="h-full rounded-full bg-emerald-500/80 transition-all dark:bg-emerald-400/70"
                                       style={{ width: `${pct}%` }}
                                     />
                                   </div>
                                   <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
-                                    {doc.score.toFixed(3)}
+                                    confidence {pct}%
+                                    <span className="ml-1.5 opacity-60">
+                                      · score {doc.score.toFixed(3)}
+                                    </span>
                                   </span>
                                 </div>
                               </div>
                             </div>
-                            <div className="flex shrink-0 items-center gap-2 sm:pl-2">
+                            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:pl-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => setPreviewDoc(doc)}
+                              >
+                                <FileText className="size-3.5" />
+                                Preview
+                              </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1595,6 +1851,76 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      <Dialog
+        open={!!previewDoc}
+        onOpenChange={(open) => {
+          if (!open) setPreviewDoc(null);
+        }}
+      >
+        <DialogContent className="max-w-lg sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="pr-6 truncate">
+              {previewDoc?.title ?? "Document preview"}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {previewDoc?.modality && (
+                  <Badge
+                    variant="outline"
+                    className="font-mono text-[10px] uppercase"
+                  >
+                    {previewDoc.modality}
+                  </Badge>
+                )}
+                {previewDoc && (
+                  <Badge
+                    variant="secondary"
+                    className="font-mono text-[10px] tabular-nums"
+                  >
+                    {scorePercent(previewDoc.score, previewDoc.confidence)}%
+                    confidence
+                  </Badge>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[min(50vh,24rem)] overflow-y-auto rounded-xl border border-border/70 bg-muted/30 p-4">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+              {previewDoc?.preview ||
+                previewDoc?.snippet ||
+                "No preview text available for this match."}
+            </p>
+          </div>
+          {(previewDoc?.tags ?? []).length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {(previewDoc?.tags ?? []).map((tag) => (
+                <Badge key={tag} variant="secondary" className="font-normal">
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setPreviewDoc(null)}>
+              Close
+            </Button>
+            <Button
+              disabled={!previewDoc || downloadingKey === previewDoc.ObjectKey}
+              onClick={() => {
+                if (previewDoc) void handleDownload(previewDoc.ObjectKey);
+              }}
+            >
+              {previewDoc && downloadingKey === previewDoc.ObjectKey ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              Download file
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!deleteTarget}

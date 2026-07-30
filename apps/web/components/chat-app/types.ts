@@ -8,6 +8,15 @@ export type SourceChunk = {
    /** Present for /web agent sources — open in a new tab */
    url?: string
    title?: string
+   /** Multimodal grounded citation fields */
+   documentId?: string | null
+   modality?: string | null
+   page?: number | null
+   timestampStart?: number | null
+   timestampEnd?: number | null
+   caption?: string | null
+   objectKey?: string | null
+   mimeType?: string | null
 }
 
 export type AgentStep = {
@@ -81,12 +90,12 @@ export type StreamEvent =
         chatId: string
         title: string
         isNewSession: boolean
-        mode?: "web" | "memory"
+        mode?: "web" | "memory" | "agent"
         userMessage: { id: string; role: string; content: string; createdAt: string }
         sources: SourceChunk[]
      }
    | { type: "delta"; content: string }
-   | { type: "status"; message: string; mode?: "web" | "memory" }
+   | { type: "status"; message: string; mode?: "web" | "memory" | "agent" }
    | {
         type: "agent_step"
         step: string
@@ -104,7 +113,7 @@ export type StreamEvent =
         chatId: string
         title: string
         isNewSession: boolean
-        mode?: "web" | "memory"
+        mode?: "web" | "memory" | "agent"
         userMessage: { id: string; role: string; content: string; createdAt: string }
         assistantMessage: { id: string; role: string; content: string; createdAt: string }
         sources: SourceChunk[]

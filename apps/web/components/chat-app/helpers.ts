@@ -15,6 +15,11 @@ export function isWebSearchDraft(text: string): boolean {
   return /^\/web(\s|$)/i.test(text.trimStart())
 }
 
+/** Multi-hop RAG over library: `/agent …` */
+export function isAgentDraft(text: string): boolean {
+  return /^\/agent(\s|$)/i.test(text.trimStart())
+}
+
 export function formatChatTime(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
     month: "short",

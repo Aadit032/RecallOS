@@ -71,7 +71,7 @@ export function AgentStepsDropdown({ steps, defaultOpen = false }: { steps: Agen
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
          >
             <Globe className="size-3.5 shrink-0 text-primary" />
-            <span className="font-medium">Web agent steps</span>
+            <span className="font-medium">Agent steps</span>
             <span className="text-[10px] opacity-70">{steps.length}</span>
             <ChevronDown className={cn("ml-auto size-3.5 transition-transform", open && "rotate-180")} />
          </button>

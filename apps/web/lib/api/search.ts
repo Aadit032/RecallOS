@@ -10,8 +10,15 @@ export type SearchResult = {
   tags: string[]
   status: string
   createdAt: string
+  /** Raw hybrid/RRF score (typically ~0–1) */
   score: number
+  /** Normalized 0–100 confidence for UI display */
+  confidence: number
   snippet: string | null
+  /** Longer preview excerpt from the best-matching chunk */
+  preview: string | null
+  /** Best-matching chunk id (for deep-link / grounded citations) */
+  chunkId?: string | null
 }
 
 export type SearchPage = {

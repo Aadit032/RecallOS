@@ -1,4 +1,21 @@
 # Changelog
+<!-- 
+## [2.1.0] - 2026-07-30
+
+Major feature release: multi-hop RAG, long-term memory, connectors, multimodal citations, FastAPI backend port.
+
+### Added
+- **Search UI**: confidence % (0–100), longer preview excerpt, Preview dialog + download from search results
+- **Dimmer upload background**: Athena art further subdued on the upload tab
+- **Agentic multi-hop RAG**: `/agent` command + Brain toggle; plan → retrieve → reason → answer with streamed steps
+- **Long-term Memory model**: extract durable facts after chats, inject into system prompts, CRUD at `/api/v1/memories`
+- **External connectors + continuous sync**: URL / RSS / GitHub / Notion-URL connectors, manual sync, background poll loop
+- **Citation-grounded multimodal answers**: sources include documentId, modality, page, timestamps, objectKey; source panel opens PDF/image/audio/video
+- **FastAPI backend** (`apps/api`): full Python port of `/api/v1/*` with same features; optional Better Auth proxy via `AUTH_PROXY_URL`
+
+### Changed
+- Hybrid retrieval payload now surfaces page / timestamp / caption for grounding
+- Chat system prompt includes long-term memories and citation guidance -->
 
 ## [2.0.0] - 2026-07-25
 

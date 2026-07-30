@@ -17,4 +17,12 @@ export const queryKeys = {
     results: (query: string, modality: string) =>
       [...queryKeys.search.all, query, modality] as const,
   },
+  memories: {
+    all: ["memories"] as const,
+    list: () => [...queryKeys.memories.all, "list"] as const,
+  },
+  connectors: {
+    all: ["connectors"] as const,
+    list: () => [...queryKeys.connectors.all, "list"] as const,
+  },
 } as const

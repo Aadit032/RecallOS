@@ -15,6 +15,9 @@ import projectRouter from "./routers/projectRouter.ts";
 import middleware from "./middleware.ts";
 import downloadRouter from "./routers/downloadRouter.ts";
 import searchRouter from "./routers/searchRouter.ts";
+import memoryRouter from "./routers/memoryRouter.ts";
+import connectorRouter from "./routers/connectorRouter.ts";
+import { runDueConnectorSyncs } from "./services/connectorService.ts";
 
 const PORT = process.env.PORT;
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:3001";
@@ -54,6 +57,20 @@ console.log(`[server] Registered: /api/v1/chat (with middleware)`);
 app.use("/api/v1/projects", middleware, projectRouter);
 console.log(`[server] Registered: /api/v1/projects (with middleware)`);
 
+app.use("/api/v1/memories", middleware, memoryRouter);
+console.log(`[server] Registered: /api/v1/memories (with middleware)`);
+
+app.use("/api/v1/connectors", middleware, connectorRouter);
+console.log(`[server] Registered: /api/v1/connectors (with middleware)`);
+
 app.listen(PORT, () => {
   console.log(`[server] RecallOS backend listening on port ${PORT}`);
 });
+
+// Continuous connector sync loop (every 60s check for due connectors)
+const CONNECTOR_SYNC_MS = Number(process.env.CONNECTOR_SYNC_POLL_MS ?? 60_000);
+setInterval(() => {
+  void runDueConnectorSyncs(5).then((n) => {
+    if (n > 0) console.log(`[connectors] Continuous sync ran ${n} connector(s)`);
+  }).catch((e) => console.error("[connectors] sync loop error", e));
+}, CONNECTOR_SYNC_MS);

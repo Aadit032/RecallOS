@@ -17,6 +17,27 @@ export const messageSchema = z.object({
     userAgent: z.string().max(1000).optional(),
     /** Optional modality filter: "pdf" | "image" | "audio" | "video" */
     modality: z.string().optional(),
+    /** Force multi-hop agent (also triggered by `/agent` prefix) */
+    agentMode: z.boolean().optional(),
+});
+
+export const createMemorySchema = z.object({
+    fact: z.string().trim().min(3).max(500),
+    importance: z.number().int().min(1).max(10).optional(),
+});
+
+export const createConnectorSchema = z.object({
+    type: z.enum(["github", "rss", "url", "notion"]),
+    name: z.string().trim().min(1).max(120),
+    config: z.record(z.string(), z.unknown()).default({}),
+    syncInterval: z.number().int().min(5).max(24 * 60).optional(),
+});
+
+export const updateConnectorSchema = z.object({
+    status: z.enum(["ACTIVE", "PAUSED"]).optional(),
+    name: z.string().trim().min(1).max(120).optional(),
+    syncInterval: z.number().int().min(5).max(24 * 60).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const bodySchema = z.object({

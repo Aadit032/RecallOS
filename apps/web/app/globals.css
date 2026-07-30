@@ -343,6 +343,20 @@ a[role="button"] {
   mask-image: linear-gradient(90deg, transparent 8%, black 46%, black 100%);
 }
 
+/* Upload tab: keep Athena visible but clearly dimmer behind the form */
+.page-art--dashboard-upload .page-art-image {
+  filter: grayscale(1) contrast(1.05) brightness(0.42);
+  object-position: 82% center;
+  opacity: 0.07;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 12%,
+    black 52%,
+    black 100%
+  );
+  mask-image: linear-gradient(90deg, transparent 12%, black 52%, black 100%);
+}
+
 .page-art--dashboard-search .page-art-image {
   object-fit: contain;
   object-position: right center;

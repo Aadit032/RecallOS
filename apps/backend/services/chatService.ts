@@ -7,6 +7,12 @@ import {
     truncateForTrace,
     type OpenRouterUsageLike,
 } from "@repo/langfuse/client";
+import {
+    formatMemoriesBlock,
+    getMemoriesForPrompt,
+    touchMemories,
+} from "./memoryService.ts";
+import { buildCitationSystemAddendum } from "./citationService.ts";
 
 const CHAT_MODEL = process.env.CHAT_MODEL ?? process.env.CONTEXT_MODEL ?? "openai/gpt-4o-mini";
 
@@ -21,13 +27,33 @@ export interface Message {
 export async function buildSystemPrompt(
     userId: string,
     chatId: string,
-    contextChunks: { text: string; id: string }[],
+    contextChunks: {
+        text: string;
+        id: string;
+        documentTitle?: string | null;
+        modality?: string | null;
+        page?: number | null;
+        timestampStart?: number | null;
+        timestampEnd?: number | null;
+    }[],
     projectSystemPrompt?: string | null,
     userAgent?: string | null
 ): Promise<string> {
     console.log(`[buildSystemPrompt] Building prompt with ${contextChunks.length} context chunks`);
     const context = contextChunks
-        .map((c, i) => `[${i + 1}] (id: ${c.id})\n${c.text}`)
+        .map((c, i) => {
+            const meta = [
+                c.documentTitle ? `doc=${c.documentTitle}` : null,
+                c.modality ? `modality=${c.modality}` : null,
+                c.page != null ? `page=${c.page}` : null,
+                c.timestampStart != null
+                    ? `time=${c.timestampStart}${c.timestampEnd != null ? `-${c.timestampEnd}` : ""}s`
+                    : null,
+            ]
+                .filter(Boolean)
+                .join(", ");
+            return `[${i + 1}] (id: ${c.id}${meta ? `; ${meta}` : ""})\n${c.text}`;
+        })
         .join("\n\n---\n\n");
 
     const totalChars = context.length;
@@ -42,6 +68,12 @@ export async function buildSystemPrompt(
         userAgent && userAgent.trim().length > 0
             ? `\n\nClient device / browser (from User-Agent; use only when relevant to the answer, e.g. OS- or browser-specific guidance):\n${userAgent.trim()}\n`
             : "";
+
+    const memories = await getMemoriesForPrompt(userId);
+    if (memories.length > 0) {
+        void touchMemories(memories.map((m) => m.id));
+    }
+    const memoryBlock = formatMemoriesBlock(memories);
 
     const responses = await prismaClient.chat.findMany({
         where: { userId, id: { not: chatId }, summary: { not: null } },
@@ -60,10 +92,11 @@ export async function buildSystemPrompt(
     return `You are RecallOS, an assistant that answers questions using the user's organizational knowledge base.
         Use ONLY the context chunks below to answer. If the context is insufficient, say so clearly.
         Be concise and accurate.
+        ${buildCitationSystemAddendum()}
         
         Recent conversation summaries: 
         ${finalSummary || "None"} 
-        
+        ${memoryBlock}
         ${projectBlock}${deviceBlock}
 
         Context chunks:
@@ -217,6 +250,15 @@ export function isWebSearchCommand(message: string): boolean {
 
 export function stripWebPrefix(message: string): string {
     return message.replace(/^\/web\s*/i, "").trim();
+}
+
+/** Multi-hop agentic RAG over the user's library: `/agent …` */
+export function isAgentCommand(message: string): boolean {
+    return /^\/agent(\s|$)/i.test(message.trimStart());
+}
+
+export function stripAgentPrefix(message: string): string {
+    return message.replace(/^\/agent\s*/i, "").trim();
 }
 
 export function beginSse(res: import("express").Response) {

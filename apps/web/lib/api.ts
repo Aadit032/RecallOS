@@ -7,6 +7,8 @@ export const API_BASE_PROJECTS = `${API_BASE}/projects`
 export const API_BASE_UPLOAD = `${API_BASE}/upload`
 export const API_BASE_DOWNLOAD = `${API_BASE}/download`
 export const API_BASE_SEARCH = `${API_BASE}/search`
+export const API_BASE_MEMORIES = `${API_BASE}/memories`
+export const API_BASE_CONNECTORS = `${API_BASE}/connectors`
 
 export const PAGE_SIZE = 20
 export const DOCS_PAGE_SIZE = 10

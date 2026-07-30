@@ -7,7 +7,8 @@
 | `bun install` | Install dependencies (Bun workspaces, not npm/pnpm) |
 | `bun run dev` | Start all apps via Turborepo |
 | `bun run --filter web dev` | Next.js 16 on port 3001 |
-| `bun run --filter backend dev` | Express 5 on port 3000 |
+| `bun run --filter backend dev` | Express 5 on port 3000 (Node + Better Auth) |
+| `bun run --filter api dev` | FastAPI Python port on port 3000 (`apps/api`) |
 | `bun run --filter workers dev` | All workers concurrently |
 | `bun run --filter workers dev:<worker>` | Single worker (e.g. `dev:pdf`, `dev:embedder`, `dev:dlq`) |
 | `cd packages/db && bunx prisma migrate dev` | Apply Prisma migrations |
@@ -33,7 +34,10 @@ import { someExport } from "@repo/qdrant/client";
 
 ## Architecture notes
 
-- **Backend is Express 5** — NOT `Bun.serve()`. The boilerplate CLAUDE.md files in sub-packages say otherwise; ignore them.
+- **Backend is Express 5** (`apps/backend`) — NOT `Bun.serve()`. A full **FastAPI port** lives in `apps/api` (same `/api/v1` surface). Prefer one process on port 3000; if FastAPI is primary, set `AUTH_PROXY_URL` to a Node Better Auth sidecar.
+- **Chat modes**: default hybrid RAG, `/web` Exa agent, `/agent` multi-hop library agent.
+- **Long-term memory**: `Memory` model auto-filled after chats; injected into system prompts.
+- **Connectors**: URL/RSS/GitHub continuous sync via `/api/v1/connectors` + background poll.
 - **Redis** uses the `redis` npm package (`packages/redis-stream`), NOT `Bun.redis` or `ioredis`.
 - **Postgres** uses Prisma 7 + `@prisma/adapter-pg` (`packages/db`), NOT `Bun.sql`.
 - **MinIO** uses AWS SDK v3 S3 client (`@aws-sdk/client-s3`).

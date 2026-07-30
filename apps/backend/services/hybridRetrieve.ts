@@ -18,6 +18,12 @@ export type RetrievedChunk = {
     documentTitle?: string | null;
     tags?: string[] | null;
     modality?: string | null;
+    /** Multimodal grounding metadata from Qdrant payload */
+    page?: number | null;
+    timestampStart?: number | null;
+    timestampEnd?: number | null;
+    caption?: string | null;
+    chunkId?: string | null;
 };
 
 export type HybridRetrieveOptions = {
@@ -195,6 +201,8 @@ export async function hybridRetrieve(
                     const tags = Array.isArray(tagsRaw)
                         ? tagsRaw.filter((t): t is string => typeof t === "string")
                         : null;
+                    const numOrNull = (v: unknown): number | null =>
+                        typeof v === "number" && Number.isFinite(v) ? v : null;
                     return {
                         id: String(point.id),
                         text: typeof payload.text === "string" ? payload.text : "",
@@ -207,6 +215,13 @@ export async function hybridRetrieve(
                         tags,
                         modality:
                             typeof payload.modality === "string" ? payload.modality : null,
+                        page: numOrNull(payload.page),
+                        timestampStart: numOrNull(payload.timestampStart),
+                        timestampEnd: numOrNull(payload.timestampEnd),
+                        caption:
+                            typeof payload.caption === "string" ? payload.caption : null,
+                        chunkId:
+                            typeof payload.chunkId === "string" ? payload.chunkId : null,
                         payloadUserId:
                             typeof payload.userId === "string" ? payload.userId : null,
                     };

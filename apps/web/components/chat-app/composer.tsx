@@ -1,13 +1,13 @@
 "use client"
 
-import { FileText, Globe, Loader2, Mic, MicOff, Pencil, Plus, Send, X } from "lucide-react"
+import { Brain, FileText, Globe, Loader2, Mic, MicOff, Pencil, Plus, Send, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
-import { isWebSearchDraft } from "./helpers"
+import { isAgentDraft, isWebSearchDraft } from "./helpers"
 
 interface ComposerProps {
    draft: string
@@ -100,11 +100,32 @@ export function Composer({
                </div>
             )}
 
+            {isAgentDraft(draft) && !sending && (
+               <div className="mb-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-150">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-background/50 px-3 py-1.5 text-sm shadow-sm backdrop-blur-lg">
+                     <Brain className="size-3.5 shrink-0 text-emerald-500" />
+                     <span className="font-medium text-foreground">Multi-hop agent</span>
+                     <span className="hidden text-muted-foreground sm:inline">· plan → retrieve → reason over your library</span>
+                     <button
+                        type="button"
+                        className="ml-0.5 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                        aria-label="Remove multi-hop agent"
+                        title="Remove /agent"
+                        onClick={() => setDraft((d) => d.replace(/^\/agent\s*/i, ""))}
+                     >
+                        <X className="size-3.5" />
+                     </button>
+                  </div>
+               </div>
+            )}
+
             <div className={cn(
                "memory-glow flex items-center gap-1 rounded-full border bg-background/90 p-1.5 backdrop-blur-sm focus-within:ring-[3px]",
                isWebSearchDraft(draft)
                   ? "border-primary/40 focus-within:border-primary focus-within:ring-primary/25"
-                  : "border-border/80 focus-within:border-ring focus-within:ring-ring/30"
+                  : isAgentDraft(draft)
+                    ? "border-emerald-500/40 focus-within:border-emerald-500 focus-within:ring-emerald-500/25"
+                    : "border-border/80 focus-within:border-ring focus-within:ring-ring/30"
             )}>
                <input ref={fileRef} type="file" className="hidden" accept=".pdf,application/pdf"
                   onChange={(e) => { const f = e.target.files?.[0]; setAttachedFile(f ?? null); e.target.value = "" }}
@@ -130,7 +151,7 @@ export function Composer({
                                  setDraft((d) => d.replace(/^\/web\s*/i, ""))
                               } else {
                                  setDraft((d) => {
-                                    const t = d.trimStart()
+                                    const t = d.replace(/^\/agent\s*/i, "").trimStart()
                                     return t ? `/web ${t}` : "/web "
                                  })
                               }
@@ -142,6 +163,32 @@ export function Composer({
                      </TooltipTrigger>
                      <TooltipContent>
                         {isWebSearchDraft(draft) ? "Disable web search" : "Web search (/web)"}
+                     </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                     <TooltipTrigger asChild>
+                        <Button
+                           type="button"
+                           variant={isAgentDraft(draft) ? "secondary" : "ghost"}
+                           size="icon-sm"
+                           className="rounded-full"
+                           onClick={() => {
+                              if (isAgentDraft(draft)) {
+                                 setDraft((d) => d.replace(/^\/agent\s*/i, ""))
+                              } else {
+                                 setDraft((d) => {
+                                    const t = d.replace(/^\/web\s*/i, "").trimStart()
+                                    return t ? `/agent ${t}` : "/agent "
+                                 })
+                              }
+                           }}
+                           aria-label={isAgentDraft(draft) ? "Disable multi-hop agent" : "Enable multi-hop agent"}
+                        >
+                           <Brain className={cn("size-4", isAgentDraft(draft) && "text-emerald-500")} />
+                        </Button>
+                     </TooltipTrigger>
+                     <TooltipContent>
+                        {isAgentDraft(draft) ? "Disable multi-hop agent" : "Multi-hop RAG (/agent)"}
                      </TooltipContent>
                   </Tooltip>
                   <Tooltip>
@@ -164,7 +211,9 @@ export function Composer({
                         ? "Edit your message and resend…"
                         : isWebSearchDraft(draft)
                            ? "Search the web… e.g. latest OpenAI announcements"
-                           : "Type / for tools & agents…"
+                           : isAgentDraft(draft)
+                             ? "Multi-hop over your library… e.g. compare Q3 goals across PDFs"
+                             : "Type /web or /agent for tools…"
                   }
                   rows={1}
                   disabled={sending || loadingMessages}

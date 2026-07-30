@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { prismaClient } from "@repo/prisma/client";
 import { hybridRetrieve } from "../services/hybridRetrieve.ts";
-import { aggregateByDocument } from "../services/searchService.ts";
+import {
+    aggregateByDocument,
+    confidenceFromScores,
+} from "../services/searchService.ts";
 import { searchSchema } from "../types.ts";
 
 const searchRouter = Router();
@@ -11,7 +14,7 @@ const SEARCH_CHUNK_LIMIT = 150;
 /**
  * POST /api/v1/search
  * Natural-language document search over the user's indexed library.
- * Returns top N documents (not raw chunks) with load-more via offset.
+ * Returns top N documents (not raw chunks) with confidence + preview.
  */
 searchRouter.post("/", async (req, res) => {
     const userId = req.userId;
@@ -42,6 +45,7 @@ searchRouter.post("/", async (req, res) => {
         const pageSlice = aggregated.slice(offset, offset + limit);
         const hasMore = offset + limit < aggregated.length;
         const nextOffset = hasMore ? offset + limit : null;
+        const maxScore = aggregated[0]?.score ?? 0;
 
         const ids = pageSlice.map((a) => a.documentId);
         const docs =
@@ -77,7 +81,10 @@ searchRouter.post("/", async (req, res) => {
                     status: doc.status,
                     createdAt: doc.createdAt,
                     score: agg.score,
+                    confidence: confidenceFromScores(agg.score, maxScore),
                     snippet: agg.snippet,
+                    preview: agg.preview,
+                    chunkId: agg.chunkId,
                 };
             })
             .filter((d): d is NonNullable<typeof d> => d !== null);

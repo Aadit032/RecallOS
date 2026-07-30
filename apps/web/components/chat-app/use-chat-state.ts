@@ -22,6 +22,7 @@ import {
    authHeaders,
    emptyDraft,
    isWebSearchDraft,
+   isAgentDraft,
    mapListItem,
    sortSessions,
 } from "./helpers"
@@ -557,6 +558,10 @@ export function useChatState() {
          setError("Add a query after /web, e.g. /web latest news on AI agents")
          return
       }
+      if (isAgentDraft(text) && !text.replace(/^\/agent\s*/i, "").trim()) {
+         setError("Add a query after /agent, e.g. /agent compare goals across my PDFs")
+         return
+      }
 
       let docInfo = ""
       if (attachedFile) {
@@ -567,6 +572,7 @@ export function useChatState() {
 
       const content = text + docInfo
       const usingWebAgent = isWebSearchDraft(content)
+      const usingMemoryAgent = isAgentDraft(content)
       const editTargetId = editingMessageId
       const tempUserId = `temp-user-${crypto.randomUUID()}`
       const tempAssistantId = `temp-assistant-${crypto.randomUUID()}`
@@ -644,7 +650,9 @@ export function useChatState() {
       setSendStatus(
          usingWebAgent
             ? "Web search agent starting…"
-            : "Searching memory and generating a reply…"
+            : usingMemoryAgent
+              ? "Multi-hop memory agent starting…"
+              : "Searching memory and generating a reply…"
       )
       setAgentSteps([])
       agentStepsRef.current = []
@@ -917,7 +925,11 @@ export function useChatState() {
                if (event.title) setSendStatus(event.title)
             } else if (event.type === "delta") {
                setSendStatus(
-                  usingWebAgent ? "Streaming web answer…" : "Streaming reply…"
+                  usingWebAgent
+                     ? "Streaming web answer…"
+                     : usingMemoryAgent
+                       ? "Streaming multi-hop answer…"
+                       : "Streaming reply…"
                )
                applyDelta(event.content)
             } else if (event.type === "done") {

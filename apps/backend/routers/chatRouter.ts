@@ -13,9 +13,14 @@ import {
     summarizeChat,
     isWebSearchCommand,
     stripWebPrefix,
+    isAgentCommand,
+    stripAgentPrefix,
     beginSse,
     writeSse,
 } from "../services/chatService.ts";
+import { runMemoryAgent } from "../agents/memoryAgent.ts";
+import { groundedSourcesFromChunks } from "../services/citationService.ts";
+import { extractAndStoreMemories } from "../services/memoryService.ts";
 import {
     startActiveObservation,
     propagateAttributes,
@@ -249,13 +254,27 @@ chatRouter.post("/message", async (req, res) => {
         return;
     }
 
-    const { message, chatId, userAgent, modality } = parsed.data;
+    const { message, chatId, userAgent, modality, agentMode } = parsed.data;
     const webMode = isWebSearchCommand(message);
+    const agentModeActive = Boolean(agentMode) || isAgentCommand(message);
     const webQuery = webMode ? stripWebPrefix(message) : "";
-    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}, webMode=${webMode}`);
+    const agentQuery = agentModeActive
+        ? isAgentCommand(message)
+            ? stripAgentPrefix(message)
+            : message
+        : "";
+    console.log(`[POST /message] Parsed: message="${message.slice(0, 120)}…", chatId=${chatId ?? "null (new session)"}, userAgent=${userAgent ? "yes" : "no"}, webMode=${webMode}, agentMode=${agentModeActive}`);
 
     if (webMode && !webQuery) {
         res.status(422).json({ message: "Add a query after /web, e.g. /web latest news on AI agents" });
+        return;
+    }
+    if (agentModeActive && !agentQuery) {
+        res.status(422).json({ message: "Add a query after /agent, e.g. /agent compare Q3 goals across my PDFs" });
+        return;
+    }
+    if (webMode && agentModeActive) {
+        res.status(422).json({ message: "Use either /web or /agent, not both" });
         return;
     }
 
@@ -277,7 +296,7 @@ chatRouter.post("/message", async (req, res) => {
         }
 
         const isNewSession = !chat;
-        const titleSeed = webMode ? webQuery : message;
+        const titleSeed = webMode ? webQuery : agentModeActive ? agentQuery : message;
         if (!chat) {
             console.log(`[POST /message] Creating new chat session for userId=${userId}`);
             chat = await prismaClient.chat.create({
@@ -296,10 +315,14 @@ chatRouter.post("/message", async (req, res) => {
 
         // Root trace for the full turn — session groups multi-turn chats in Langfuse
         await startActiveObservation("chat-message", async (rootSpan) => {
+            const chatMode = webMode ? "web" : agentModeActive ? "agent" : "memory";
             rootSpan.update({
                 input: {
-                    message: truncateForTrace(webMode ? webQuery : message, 1_000),
-                    mode: webMode ? "web" : "memory",
+                    message: truncateForTrace(
+                        webMode ? webQuery : agentModeActive ? agentQuery : message,
+                        1_000
+                    ),
+                    mode: chatMode,
                     isNewSession,
                 },
                 metadata: {
@@ -314,11 +337,15 @@ chatRouter.post("/message", async (req, res) => {
                     sessionId: resolvedChat.id,
                     tags: [
                         "chat",
-                        webMode ? "web" : "memory",
+                        chatMode,
                         isNewSession ? "new-session" : "continue-session",
                     ],
                     metadata: {
-                        feature: webMode ? "web-agent" : "rag-chat",
+                        feature: webMode
+                            ? "web-agent"
+                            : agentModeActive
+                              ? "memory-agent"
+                              : "rag-chat",
                         projectId: resolvedChat.projectId ?? "",
                     },
                 },
@@ -541,6 +568,182 @@ chatRouter.post("/message", async (req, res) => {
             return;
         }
 
+        // ── /agent path: multi-hop RAG over document memory ──
+        if (agentModeActive) {
+            console.log(`[POST /message] Memory-agent path for query="${agentQuery.slice(0, 120)}"`);
+            beginSse(res);
+
+            writeSse(res, {
+                type: "meta",
+                chatId: resolvedChat.id,
+                title,
+                isNewSession,
+                mode: "agent",
+                userMessage: {
+                    id: userMessage.id,
+                    role: userMessage.role,
+                    content: userMessage.content,
+                    createdAt: userMessage.createdAt,
+                },
+                sources: [],
+            });
+            writeSse(res, {
+                type: "status",
+                message: "Starting multi-hop memory agent…",
+                mode: "agent",
+            });
+
+            let clientClosed = false;
+            req.on("close", () => {
+                clientClosed = true;
+            });
+
+            let assistantText = "";
+            let sources: Awaited<ReturnType<typeof groundedSourcesFromChunks>> = [];
+            let streamFailed = false;
+            let turnTokenUsage: TokenUsageSummary = emptyTokenUsage();
+
+            try {
+                const agentResult = await runMemoryAgent(agentQuery, {
+                    userId,
+                    sessionId: resolvedChat.id,
+                    modality,
+                    tags: ["chat"],
+                    onEvent: async (event) => {
+                        if (clientClosed || res.writableEnded) return;
+                        writeSse(res, {
+                            type: "status",
+                            message: event.title,
+                            mode: "agent",
+                        });
+                        writeSse(res, {
+                            type: "agent_step",
+                            step: event.step,
+                            title: event.title,
+                            detail: event.detail,
+                            query: event.query,
+                            resultCount: event.resultCount,
+                            iteration: event.iteration,
+                            enough: event.enough,
+                            reasoning: event.reasoning,
+                            nextQuery: event.nextQuery,
+                        });
+                    },
+                });
+
+                assistantText = agentResult.answer;
+                turnTokenUsage = agentResult.tokenUsage;
+                sources = await groundedSourcesFromChunks(userId, agentResult.chunks);
+
+                if (!clientClosed && !res.writableEnded) {
+                    writeSse(res, { type: "status", message: "Streaming answer…", mode: "agent" });
+                    writeSse(res, {
+                        type: "meta",
+                        chatId: resolvedChat.id,
+                        title,
+                        isNewSession,
+                        mode: "agent",
+                        userMessage: {
+                            id: userMessage.id,
+                            role: userMessage.role,
+                            content: userMessage.content,
+                            createdAt: userMessage.createdAt,
+                        },
+                        sources,
+                    });
+                    writeSse(res, { type: "delta", content: assistantText });
+                }
+            } catch (agentErr) {
+                streamFailed = true;
+                console.error(`[POST /message] Memory agent error:`, agentErr);
+                if (!clientClosed && !res.writableEnded) {
+                    writeSse(res, {
+                        type: "error",
+                        message:
+                            agentErr instanceof Error
+                                ? agentErr.message
+                                : "Memory agent failed",
+                    });
+                }
+            }
+
+            if (!assistantText.trim()) {
+                if (streamFailed) {
+                    if (!res.writableEnded) res.end();
+                    rootSpan.update({ level: "ERROR", output: { error: "memory-agent-failed" } });
+                    return;
+                }
+                assistantText = "I couldn't find enough information in your library to answer that.";
+                if (!clientClosed && !res.writableEnded) {
+                    writeSse(res, { type: "delta", content: assistantText });
+                }
+            }
+
+            const assistantMessage = await prismaClient.message.create({
+                data: {
+                    chatId: resolvedChat.id,
+                    role: "assistant",
+                    content: assistantText,
+                    sourceChunks: sources,
+                },
+            });
+
+            await prismaClient.chat.update({
+                where: { id: resolvedChat.id },
+                data: {
+                    updatedAt: new Date(),
+                    ...(shouldSetTitle ? { title } : {}),
+                },
+            });
+
+            if (!clientClosed && !res.writableEnded && !streamFailed) {
+                writeSse(res, {
+                    type: "done",
+                    chatId: resolvedChat.id,
+                    title,
+                    isNewSession,
+                    mode: "agent",
+                    userMessage: {
+                        id: userMessage.id,
+                        role: userMessage.role,
+                        content: userMessage.content,
+                        createdAt: userMessage.createdAt,
+                    },
+                    assistantMessage: {
+                        id: assistantMessage.id,
+                        role: assistantMessage.role,
+                        content: assistantMessage.content,
+                        createdAt: assistantMessage.createdAt,
+                    },
+                    sources,
+                });
+            }
+            if (!res.writableEnded) res.end();
+
+            void extractAndStoreMemories({
+                userId,
+                chatId: resolvedChat.id,
+                userMessage: message,
+                assistantMessage: assistantText,
+            });
+
+            const tokenFields = traceTokenUsageFields(turnTokenUsage);
+            rootSpan.update({
+                output: {
+                    mode: "agent",
+                    answer: truncateForTrace(assistantText, 2_000),
+                    sourceCount: sources.length,
+                    ...tokenFields.output,
+                },
+                metadata: { model: CHAT_MODEL, ...tokenFields.metadata },
+                ...("usageDetails" in tokenFields
+                    ? { usageDetails: tokenFields.usageDetails, costDetails: tokenFields.costDetails }
+                    : {}),
+            });
+            console.log(`[POST /message] Memory agent done for chat ${resolvedChat.id}`);
+            return;
+        }
+
         // 3. Hybrid retrieval (dense + sparse → RRF top 50)
         console.log(`[POST /message] Step 3 — Hybrid retrieval for: "${message.slice(0, 120)}"`);
         const fusedChunks = await hybridRetrieve(userId, message, modality);
@@ -548,7 +751,7 @@ chatRouter.post("/message", async (req, res) => {
 
         // 4. Cross-encoder rerank → top 5
         console.log(`[POST /message] Step 4 — Cross-encoder rerank (top ${RERANK_TOP_K})`);
-        const topChunks = await startActiveObservation(
+        const rankedChunks = await startActiveObservation(
             "cross-encode-rerank",
             async (span) => {
                 span.update({
@@ -572,6 +775,14 @@ chatRouter.post("/message", async (req, res) => {
                 return ranked;
             }
         );
+        // Re-attach multimodal payload fields lost during rerank map
+        const fusedById = new Map(fusedChunks.map((c) => [c.id, c]));
+        const topChunks = rankedChunks.map((r) => {
+            const base = fusedById.get(r.id);
+            return base
+                ? { ...base, score: r.score, text: r.text }
+                : { id: r.id, text: r.text, score: r.score };
+        });
         console.log(`[POST /message] Rerank returned ${topChunks.length} chunks`);
 
         // 5. Load prior messages for multi-turn context
@@ -593,13 +804,8 @@ chatRouter.post("/message", async (req, res) => {
         ];
         console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}, userAgent=${Boolean(userAgent)}`);
 
-        // 6. Stream LLM reply via OpenRouter → SSE to the client
-        const sources = topChunks.map((c, i) => ({
-            rank: i + 1,
-            id: c.id,
-            score: c.score,
-            text: c.text.slice(0, 400),
-        }));
+        // 6. Stream LLM reply via OpenRouter → SSE to the client (multimodal-grounded sources)
+        const sources = await groundedSourcesFromChunks(userId, topChunks);
 
         beginSse(res);
 
@@ -791,8 +997,14 @@ chatRouter.post("/message", async (req, res) => {
                 : {}),
         });
 
-        // Summarize in the background after the client has the full answer
+        // Summarize + extract long-term memories after the client has the full answer
         if (streamFailed) return;
+        void extractAndStoreMemories({
+            userId,
+            chatId: resolvedChat.id,
+            userMessage: message,
+            assistantMessage: assistantText,
+        });
         try {
             const messagesToSummarize = await prismaClient.message.findMany({
                 where: { chatId: resolvedChat.id },
