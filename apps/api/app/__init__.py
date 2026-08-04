@@ -1,1 +1,0 @@
-"""RecallOS FastAPI backend."""

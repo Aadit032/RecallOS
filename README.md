@@ -49,7 +49,6 @@ curl -fsSL https://raw.githubusercontent.com/Aadit032/RecallOS/refs/heads/main/s
 | 🧬 **Long-term memory** | Durable facts extracted from chats and injected into prompts |
 | 🔌 **Connectors** | URL / RSS / GitHub continuous sync into the same index |
 | 📎 **Multimodal citations** | Jump to PDF page, image, audio/video timestamp from sources |
-| 🐍 **FastAPI backend** | Python port in `apps/api` (same `/api/v1` API) |
 | 📂 **Projects** | Organize chats with custom system prompts |
 | 📌 **Chat history** | Pin, delete, version (edit/resend), and rolling conversation summaries |
 | 📊 **Langfuse tracing** | Full observability for chat RAG and ingestion pipelines |
