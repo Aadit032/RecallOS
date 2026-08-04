@@ -7,7 +7,7 @@ Major feature release: multi-hop RAG, long-term memory, connectors, multimodal c
 ### Added
 - **Search UI**: confidence % (0–100), longer preview excerpt, Preview dialog + download from search results
 - **Dimmer upload background**: Athena art further subdued on the upload tab
-- **Agentic multi-hop RAG**: `/agent` command + Brain toggle; plan → retrieve → reason → answer with streamed steps
+- **Agentic multi-hop RAG**: `/agent` command + multi-hop toggle; plan → retrieve → reason → answer with streamed steps
 - **Long-term Memory model**: extract durable facts after chats, inject into system prompts, CRUD at `/api/v1/memories`
 - **External connectors + continuous sync**: URL / RSS / GitHub / Notion-URL connectors, manual sync, background poll loop
 - **Citation-grounded multimodal answers**: sources include documentId, modality, page, timestamps, objectKey; source panel opens PDF/image/audio/video

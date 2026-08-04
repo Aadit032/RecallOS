@@ -73,12 +73,17 @@ model Verification {
   @@index([identifier])
 }
 
+enum MemorySource {
+  chat
+  manual
+  connector
+}
+
 model Memory {
-  id         String    @id @default(uuid())
+  id         String       @id @default(uuid())
   fact       String
-  importance Int       @default(5)
-  /// chat | manual | connector
-  source     String    @default("chat")
+  importance Int          @default(5)
+  source     MemorySource @default(chat)
   chatId     String?
 
   createdAt  DateTime  @default(now())
@@ -92,22 +97,40 @@ model Memory {
   @@index([userId, importance])
 }
 
+enum ConnectorType {
+  github
+  rss
+  url
+  notion
+}
+
+enum ConnectorStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+enum ConnectorSyncJobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
 /// External knowledge connectors (GitHub, Notion-style URL, RSS, generic web).
 model Connector {
-  id           String    @id @default(uuid())
-  /// github | rss | url | notion
-  type         String
+  id           String          @id @default(uuid())
+  type         ConnectorType
   name         String
   /// Provider-specific config (repo, feed URL, access token, etc.)
-  config       Json      @default("{}")
-  /// ACTIVE | PAUSED | ERROR
-  status       String    @default("ACTIVE")
+  config       Json            @default("{}")
+  status       ConnectorStatus @default(ACTIVE)
   lastSyncedAt DateTime?
   lastError    String?
   /// Minutes between continuous sync polls (default 30)
-  syncInterval Int       @default(30)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  syncInterval Int             @default(30)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -118,12 +141,11 @@ model Connector {
 }
 
 model ConnectorSyncJob {
-  id               String    @id @default(uuid())
-  /// PENDING | RUNNING | SUCCESS | FAILED
-  status           String    @default("PENDING")
-  documentsCreated Int       @default(0)
+  id               String                 @id @default(uuid())
+  status           ConnectorSyncJobStatus @default(PENDING)
+  documentsCreated Int                    @default(0)
   error            String?
-  startedAt        DateTime  @default(now())
+  startedAt        DateTime               @default(now())
   finishedAt       DateTime?
 
   connectorId String

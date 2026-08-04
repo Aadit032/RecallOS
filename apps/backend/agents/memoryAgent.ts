@@ -2,7 +2,6 @@
  * Agentic multi-hop RAG over the user's document memory.
  * Plan sub-queries → hybrid retrieve → reason sufficiency → re-retrieve → answer.
  *
- * Node names must not collide with state channel keys (query, answer, …).
  */
 import { Annotation, START, END, StateGraph } from "@langchain/langgraph";
 import { ChatOpenRouter } from "@langchain/openrouter";
@@ -175,9 +174,7 @@ async function planNode(state: typeof AgentState.State) {
 
 async function retrieveNode(state: typeof AgentState.State) {
     const q = (state.nextSearchQuery || state.query).trim() || state.query;
-    console.log(
-        `[memoryAgent:retrieve] hop=${state.iteration + 1} query="${q.slice(0, 120)}"`
-    );
+    console.log(`[memoryAgent:retrieve] hop=${state.iteration + 1} query="${q.slice(0, 120)}"`);
 
     const raw = await hybridRetrieve(state.userId, q, {
         limit: 40,
@@ -211,9 +208,7 @@ async function retrieveNode(state: typeof AgentState.State) {
 }
 
 async function reasonNode(state: typeof AgentState.State) {
-    console.log(
-        `[memoryAgent:reason] judging ${state.chunks.length} chunks (hop ${state.iteration}/${MAX_HOPS})`
-    );
+    console.log(`[memoryAgent:reason] judging ${state.chunks.length} chunks (hop ${state.iteration}/${MAX_HOPS})`);
     const structured = llm.withStructuredOutput(HopDecisionSchema);
     const result = (await structured.invoke(`
         You are a retrieval critic for multi-hop RAG.
@@ -232,9 +227,7 @@ async function reasonNode(state: typeof AgentState.State) {
         Is this enough? If not, what should we search next?
     `)) as HopDecision;
 
-    console.log(
-        `[memoryAgent:reason] enough=${result.enoughInformation} next="${(result.nextSearchQuery ?? "").slice(0, 80)}"`
-    );
+    console.log(`[memoryAgent:reason] enough=${result.enoughInformation} next="${(result.nextSearchQuery ?? "").slice(0, 80)}"`);
 
     return {
         decision: result,

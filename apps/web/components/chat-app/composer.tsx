@@ -1,6 +1,6 @@
 "use client"
 
-import { Brain, FileText, Globe, Loader2, Mic, MicOff, Pencil, Plus, Send, X } from "lucide-react"
+import { FileText, Globe, Loader2, Mic, MicOff, Pencil, Plus, Send, Waypoints, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -103,7 +103,7 @@ export function Composer({
             {isAgentDraft(draft) && !sending && (
                <div className="mb-2 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-150">
                   <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-background/50 px-3 py-1.5 text-sm shadow-sm backdrop-blur-lg">
-                     <Brain className="size-3.5 shrink-0 text-emerald-500" />
+                     <Waypoints className="size-3.5 shrink-0 text-emerald-500" />
                      <span className="font-medium text-foreground">Multi-hop agent</span>
                      <span className="hidden text-muted-foreground sm:inline">· plan → retrieve → reason over your library</span>
                      <button
@@ -184,7 +184,7 @@ export function Composer({
                            }}
                            aria-label={isAgentDraft(draft) ? "Disable multi-hop agent" : "Enable multi-hop agent"}
                         >
-                           <Brain className={cn("size-4", isAgentDraft(draft) && "text-emerald-500")} />
+                           <Waypoints className={cn("size-4", isAgentDraft(draft) && "text-emerald-500")} />
                         </Button>
                      </TooltipTrigger>
                      <TooltipContent>
