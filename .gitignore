@@ -8,12 +8,13 @@ node_modules
 local_cache/
 downloaded*
 
-# Local env files
+# Local env files (all packages / nested)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
 # Testing
 coverage
@@ -39,3 +40,6 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# Internal interview material (do not publish)
+interview.md

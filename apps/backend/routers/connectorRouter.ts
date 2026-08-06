@@ -9,6 +9,7 @@ import {
     type ConnectorType,
 } from "../services/connectorService.ts";
 import { createConnectorSchema, updateConnectorSchema } from "../types.ts";
+import { clientErrorMessage } from "../security/httpErrors.ts";
 
 const connectorRouter = Router();
 
@@ -24,8 +25,7 @@ connectorRouter.get("/", async (req, res) => {
     } catch (e) {
         console.error("[GET /connectors]", e);
         res.status(500).json({
-            message: "Failed to list connectors",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to list connectors"
         });
     }
 });
@@ -47,17 +47,16 @@ connectorRouter.post("/", async (req, res) => {
             type: parsed.data.type as ConnectorType,
             name: parsed.data.name,
             config: parsed.data.config as ConnectorConfig,
-            syncInterval: parsed.data.syncInterval,
+            syncInterval: parsed.data.syncInterval
         });
         // Kick off first sync immediately (async)
         void runConnectorSync(connector.id);
         res.status(201).json({ connector });
     } catch (e) {
         console.error("[POST /connectors]", e);
-        res.status(500).json({
-            message: "Failed to create connector",
-            error: e instanceof Error ? e.message : e,
-        });
+        const msg = clientErrorMessage(e, "Failed to create connector");
+        const status = msg === "Failed to create connector" ? 500 : 400;
+        res.status(status).json({ message: msg });
     }
 });
 
@@ -87,8 +86,7 @@ connectorRouter.patch("/:id", async (req, res) => {
     } catch (e) {
         console.error("[PATCH /connectors]", e);
         res.status(500).json({
-            message: "Failed to update connector",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to update connector"
         });
     }
 });
@@ -112,8 +110,7 @@ connectorRouter.post("/:id/sync", async (req, res) => {
     } catch (e) {
         console.error("[POST /connectors/:id/sync]", e);
         res.status(500).json({
-            message: "Sync failed",
-            error: e instanceof Error ? e.message : e,
+            message: "Sync failed"
         });
     }
 });
@@ -135,8 +132,7 @@ connectorRouter.delete("/:id", async (req, res) => {
     } catch (e) {
         console.error("[DELETE /connectors]", e);
         res.status(500).json({
-            message: "Failed to delete connector",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to delete connector"
         });
     }
 });

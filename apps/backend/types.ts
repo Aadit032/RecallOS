@@ -16,7 +16,7 @@ export const messageSchema = z.object({
     /** Browser user-agent — injected into the system prompt, not stored as user text */
     userAgent: z.string().max(1000).optional(),
     /** Optional modality filter: "pdf" | "image" | "audio" | "video" */
-    modality: z.string().optional(),
+    modality: z.enum(["pdf", "image", "audio", "video"]).optional(),
     /** Force multi-hop agent (also triggered by `/agent` prefix) */
     agentMode: z.boolean().optional(),
 });
@@ -65,6 +65,6 @@ export const ReasoningSchema = z.object({
 export const searchSchema = z.object({
     query: z.string().trim().min(1).max(2000),
     limit: z.number().int().min(1).max(50).optional(),
-    offset: z.number().int().min(0).optional(),
-    modality: z.string().trim().min(1).max(32).optional(),
+    offset: z.number().int().min(0).max(500).optional(),
+    modality: z.enum(["pdf", "image", "audio", "video"]).optional(),
 });

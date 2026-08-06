@@ -27,6 +27,10 @@ async function uniqueUsernameFromEmail(email: string): Promise<string> {
   return `${base.slice(0, 18)}_${crypto.randomUUID().slice(0, 6)}`;
 }
 
+const isProd =
+  process.env.NODE_ENV === "production" ||
+  (!BETTER_AUTH_URL.includes("localhost") && !BETTER_AUTH_URL.includes("127.0.0.1"));
+
 export const auth = betterAuth({
   baseURL: BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
@@ -38,6 +42,14 @@ export const auth = betterAuth({
   advanced: {
     database: {
       generateId: () => crypto.randomUUID(),
+    },
+    // Secure cookies in production / non-localhost deployments
+    useSecureCookies: isProd,
+    defaultCookieAttributes: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isProd,
+      path: "/",
     },
   },
   // Cookie sessions: expire after 7 days; renew (sliding) once per day when used

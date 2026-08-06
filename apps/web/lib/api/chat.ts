@@ -106,20 +106,42 @@ export async function deleteProject(id: string): Promise<void> {
   await axios.delete(`${API_BASE_PROJECTS}/${id}`, { headers: authHeaders() })
 }
 
+function guessContentType(file: File): string {
+  if (file.type && file.type.trim()) return file.type
+  const name = file.name.toLowerCase()
+  if (name.endsWith(".pdf")) return "application/pdf"
+  if (name.endsWith(".png")) return "image/png"
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg"
+  if (name.endsWith(".webp")) return "image/webp"
+  if (name.endsWith(".mp3")) return "audio/mpeg"
+  if (name.endsWith(".wav")) return "audio/wav"
+  if (name.endsWith(".mp4")) return "video/mp4"
+  if (name.endsWith(".webm")) return "video/webm"
+  if (name.endsWith(".txt") || name.endsWith(".md")) return "text/plain"
+  return "application/pdf"
+}
+
 export async function uploadChatFile(file: File): Promise<string> {
+  const contentType = guessContentType(file)
   const { data: urlData } = await axios.post(
     `${API_BASE_UPLOAD}/post-file-url`,
-    { fileName: file.name, contentType: file.type },
+    { fileName: file.name, contentType, size: file.size },
     { headers: authHeaders() }
   )
 
+  const putType = (urlData.contentType as string | undefined) || contentType
   await axios.put(urlData.presignedUrl, file, {
-    headers: { "Content-Type": file.type },
+    headers: { "Content-Type": putType },
   })
 
   const { data: confirmData } = await axios.post(
     `${API_BASE_UPLOAD}/confirm`,
-    { fileName: file.name, key: urlData.key, size: file.size },
+    {
+      fileName: file.name,
+      key: urlData.key,
+      size: file.size,
+      contentType: putType,
+    },
     { headers: authHeaders() }
   )
 

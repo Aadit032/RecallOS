@@ -38,7 +38,7 @@ searchRouter.post("/", async (req, res) => {
     try {
         const chunks = await hybridRetrieve(userId, query, {
             limit: SEARCH_CHUNK_LIMIT,
-            modality,
+            modality
         });
 
         const aggregated = aggregateByDocument(chunks);
@@ -62,7 +62,7 @@ searchRouter.post("/", async (req, res) => {
                           tags: true,
                           status: true,
                           createdAt: true,
-                      },
+                      }
                   });
 
         const byId = new Map(docs.map((d) => [d.id, d]));
@@ -97,13 +97,12 @@ searchRouter.post("/", async (req, res) => {
             limit,
             hasMore,
             nextOffset,
-            totalMatched: aggregated.length,
+            totalMatched: aggregated.length
         });
     } catch (e) {
         console.error(`[search] Failed:`, e);
         res.status(500).json({
-            message: "Search failed",
-            error: e instanceof Error ? e.message : String(e),
+            message: "Search failed"
         });
     }
 });

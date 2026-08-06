@@ -26,20 +26,19 @@ projectRouter.get("/", async (req, res) => {
                 createdAt: true,
                 updatedAt: true,
                 _count: { select: { chats: true } },
-            },
+            }
         });
 
         res.status(200).json({
             projects: projects.map(({ _count, ...p }) => ({
                 ...p,
-                chatCount: _count.chats,
-            })),
+                chatCount: _count.chats
+            }))
         });
     } catch (e) {
         console.error(`[GET /projects] Error:`, e);
         res.status(500).json({
-            message: "Failed to list projects",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to list projects"
         });
     }
 });
@@ -67,15 +66,14 @@ projectRouter.post("/", async (req, res) => {
                 userId,
                 name: parsed.data.name,
                 systemPrompt: parsed.data.systemPrompt ?? null,
-            },
+            }
         });
         console.log(`[POST /projects] Created project ${project.id}`);
         res.status(201).json({ project });
     } catch (e) {
         console.error(`[POST /projects] Error:`, e);
         res.status(500).json({
-            message: "Failed to create project",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to create project"
         });
     }
 });
@@ -105,7 +103,7 @@ projectRouter.patch("/:id", async (req, res) => {
 
     try {
         const existing = await prismaClient.project.findFirst({
-            where: { id, userId },
+            where: { id, userId }
         });
         if (!existing) {
             res.status(404).json({ message: "Project not found" });
@@ -114,15 +112,14 @@ projectRouter.patch("/:id", async (req, res) => {
 
         const project = await prismaClient.project.update({
             where: { id },
-            data: parsed.data,
+            data: parsed.data
         });
         console.log(`[PATCH /projects/:id] Updated project ${id}`);
         res.status(200).json({ project });
     } catch (e) {
         console.error(`[PATCH /projects/:id] Error:`, e);
         res.status(500).json({
-            message: "Failed to update project",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to update project"
         });
     }
 });
@@ -141,7 +138,7 @@ projectRouter.delete("/:id", async (req, res) => {
 
     try {
         const existing = await prismaClient.project.findFirst({
-            where: { id, userId },
+            where: { id, userId }
         });
         if (!existing) {
             res.status(404).json({ message: "Project not found" });
@@ -154,8 +151,7 @@ projectRouter.delete("/:id", async (req, res) => {
     } catch (e) {
         console.error(`[DELETE /projects/:id] Error:`, e);
         res.status(500).json({
-            message: "Failed to delete project",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to delete project"
         });
     }
 });

@@ -24,6 +24,16 @@ function linkifyBareUrls(text: string): string {
    )
 }
 
+/** Only allow safe navigable URLs in rendered markdown (blocks javascript:, data:, etc.). */
+function safeHref(href: string | undefined): string | undefined {
+   if (!href) return undefined
+   const trimmed = href.trim()
+   if (/^https?:\/\//i.test(trimmed)) return trimmed
+   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed
+   if (trimmed.startsWith("#")) return trimmed
+   return undefined
+}
+
 export function MarkdownContent({ content }: { content: string }) {
    const processed = linkifyBareUrls(content)
 
@@ -31,6 +41,7 @@ export function MarkdownContent({ content }: { content: string }) {
       <Markdown
          remarkPlugins={[remarkGfm, remarkMath]}
          rehypePlugins={[rehypeKatex]}
+         // Do not enable rehype-raw — raw HTML in model output would be XSS
          components={{
             p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
             pre: ({ children }) => (
@@ -53,16 +64,24 @@ export function MarkdownContent({ content }: { content: string }) {
             table: ({ children }) => <div className="mb-2 overflow-x-auto"><table className="w-full text-sm">{children}</table></div>,
             th: ({ children }) => <th className="border-b border-border px-2 py-1 text-left font-medium">{children}</th>,
             td: ({ children }) => <td className="border-b border-border px-2 py-1">{children}</td>,
-            a: ({ children, href }) => (
-               <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary break-words"
-               >
-                  {children}
-               </a>
-            ),
+            a: ({ children, href }) => {
+               const safe = safeHref(href)
+               if (!safe) {
+                  return <span className="break-words">{children}</span>
+               }
+               return (
+                  <a
+                     href={safe}
+                     target="_blank"
+                     rel="noopener noreferrer nofollow"
+                     className="text-primary underline underline-offset-2 decoration-primary/60 hover:decoration-primary break-words"
+                  >
+                     {children}
+                  </a>
+               )
+            },
+            // Drop images/embeds from untrusted model output (SSRF/tracking)
+            img: () => null,
             hr: () => <hr className="my-3 border-border" />,
          }}
       >

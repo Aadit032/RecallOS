@@ -1,4 +1,4 @@
-/** Map MIME type to S3 key prefix (folder). */
+/** Map MIME type to S3 key prefix (folder). Prefer buildUploadObjectKey for new uploads. */
 export function keyPrefix(mimeType: string): string {
     if (mimeType.startsWith("image/")) return "image";
     if (mimeType.startsWith("audio/")) return "audio";
@@ -7,9 +7,10 @@ export function keyPrefix(mimeType: string): string {
 }
 
 export function modalityFromMime(mimeType: string): string {
-    if (mimeType.startsWith("image/")) return "image";
-    if (mimeType.startsWith("audio/")) return "audio";
-    if (mimeType.startsWith("video/")) return "video";
+    const m = mimeType.trim().toLowerCase().split(";")[0]!.trim();
+    if (m.startsWith("image/")) return "image";
+    if (m.startsWith("audio/")) return "audio";
+    if (m.startsWith("video/")) return "video";
     return "pdf";
 }
 

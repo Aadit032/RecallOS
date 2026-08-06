@@ -81,6 +81,23 @@ curl -fsSL https://raw.githubusercontent.com/Aadit032/RecallOS/refs/heads/main/s
 
 ---
 
+## 📚 Documentation
+
+Full technical docs live in [`docs/`](./docs/README.md):
+
+| Guide | Description |
+|:------|:------------|
+| [Architecture](./docs/architecture.md) | System design, packages, ingestion & retrieval |
+| [Diagrams](./docs/diagrams.md) | Mermaid system, ER, stream, and deploy diagrams |
+| [Sequence diagrams](./docs/sequence-diagrams.md) | Auth, upload, workers, chat, connectors |
+| [API reference](./docs/api.md) | REST + SSE contracts |
+| [Onboarding](./docs/onboarding.md) | New developer day-one setup |
+| [Deployment](./docs/deployment.md) | Production config & checklist |
+| [Disaster recovery](./docs/disaster-recovery.md) | Backups, runbooks, RTO/RPO |
+| [Security audit](./audit.md) | Security findings & remediations |
+
+---
+
 ## 🏗️ Architecture
 
 ```text

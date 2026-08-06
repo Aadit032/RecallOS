@@ -20,8 +20,7 @@ memoryRouter.get("/", async (req, res) => {
     } catch (e) {
         console.error("[GET /memories]", e);
         res.status(500).json({
-            message: "Failed to list memories",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to list memories"
         });
     }
 });
@@ -47,8 +46,7 @@ memoryRouter.post("/", async (req, res) => {
     } catch (e) {
         console.error("[POST /memories]", e);
         res.status(500).json({
-            message: "Failed to create memory",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to create memory"
         });
     }
 });
@@ -70,8 +68,7 @@ memoryRouter.delete("/:id", async (req, res) => {
     } catch (e) {
         console.error("[DELETE /memories]", e);
         res.status(500).json({
-            message: "Failed to delete memory",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to delete memory"
         });
     }
 });

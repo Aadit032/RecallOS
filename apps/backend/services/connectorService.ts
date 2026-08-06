@@ -2,6 +2,13 @@ import { prismaClient } from "@repo/prisma/client";
 import { s3 } from "@repo/minio/client";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { xAddToStream } from "@repo/redis-stream/client";
+import {
+    assertSafeOutboundUrl,
+    validateGithubPath,
+    validateGithubRepo,
+    validatePublicHttpUrl,
+} from "../security/ssrf.ts";
+
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const FILES_STREAM = process.env.FILES_STREAM ?? "files_stream";
 
@@ -29,8 +36,63 @@ function asConfig(raw: unknown): ConnectorConfig {
     return raw as ConnectorConfig;
 }
 
+/** Strip secrets before returning connector rows to API clients. */
+export function redactConnectorConfig(config: unknown): Record<string, unknown> {
+    const c = asConfig(config);
+    const out: Record<string, unknown> = { ...c };
+    if (typeof out.token === "string" && out.token.length > 0) {
+        out.token = "[redacted]";
+        out.hasToken = true;
+    } else {
+        delete out.token;
+        out.hasToken = false;
+    }
+    return out;
+}
+
+export function sanitizeConnectorConfigForStorage(
+    type: ConnectorType,
+    config: ConnectorConfig
+): ConnectorConfig {
+    const maxItems = Math.min(Math.max(Number(config.maxItems) || 5, 1), 25);
+    const out: ConnectorConfig = { maxItems };
+
+    if (type === "url" || type === "notion") {
+        const url = typeof config.url === "string" ? config.url.trim() : "";
+        const parsed = validatePublicHttpUrl(url);
+        if (!parsed.ok) throw new Error(`Invalid connector URL: ${parsed.reason}`);
+        out.url = parsed.href;
+    } else if (type === "rss") {
+        const feed = (typeof config.feedUrl === "string" ? config.feedUrl : config.url) ?? "";
+        const parsed = validatePublicHttpUrl(String(feed).trim());
+        if (!parsed.ok) throw new Error(`Invalid feed URL: ${parsed.reason}`);
+        out.feedUrl = parsed.href;
+        out.url = parsed.href;
+    } else if (type === "github") {
+        out.repo = validateGithubRepo(String(config.repo ?? ""));
+        const branch = typeof config.branch === "string" ? config.branch.trim() : "main";
+        if (!/^[a-zA-Z0-9._/-]+$/.test(branch) || branch.includes("..") || branch.length > 200) {
+            throw new Error("Invalid GitHub branch");
+        }
+        out.branch = branch;
+        out.path = typeof config.path === "string" ? config.path.replace(/^\//, "").slice(0, 500) : "";
+        if (out.path && (out.path.includes("..") || out.path.includes("\\"))) {
+            throw new Error("Invalid GitHub path");
+        }
+        if (typeof config.token === "string" && config.token.trim()) {
+            const token = config.token.trim();
+            if (token.length > 500 || !/^[a-zA-Z0-9_.=-]+$/.test(token)) {
+                throw new Error("Invalid GitHub token format");
+            }
+            out.token = token;
+        }
+    }
+
+    return out;
+}
+
 export async function listConnectors(userId: string) {
-    return prismaClient.connector.findMany({
+    const rows = await prismaClient.connector.findMany({
         where: { userId },
         orderBy: { updatedAt: "desc" },
         include: {
@@ -40,6 +102,10 @@ export async function listConnectors(userId: string) {
             },
         },
     });
+    return rows.map((row) => ({
+        ...row,
+        config: redactConnectorConfig(row.config),
+    }));
 }
 
 export async function createConnector(params: {
@@ -49,16 +115,21 @@ export async function createConnector(params: {
     config: ConnectorConfig;
     syncInterval?: number;
 }) {
-    return prismaClient.connector.create({
+    const safeConfig = sanitizeConnectorConfigForStorage(params.type, params.config);
+    const created = await prismaClient.connector.create({
         data: {
             userId: params.userId,
             type: params.type,
             name: params.name.trim().slice(0, 120),
-            config: params.config as never,
+            config: safeConfig as never,
             syncInterval: Math.max(5, Math.min(24 * 60, params.syncInterval ?? 30)),
             status: "ACTIVE",
         },
     });
+    return {
+        ...created,
+        config: redactConnectorConfig(created.config),
+    };
 }
 
 export async function deleteConnector(userId: string, id: string) {
@@ -75,10 +146,14 @@ export async function setConnectorStatus(
 ) {
     const existing = await prismaClient.connector.findFirst({ where: { id, userId } });
     if (!existing) return null;
-    return prismaClient.connector.update({
+    const updated = await prismaClient.connector.update({
         where: { id },
         data: { status },
     });
+    return {
+        ...updated,
+        config: redactConnectorConfig(updated.config),
+    };
 }
 
 async function ingestTextDocument(params: {
@@ -180,13 +255,53 @@ function chunkText(text: string, size = 1200, overlap = 150): string[] {
     return chunks.slice(0, 40);
 }
 
-async function fetchUrlText(url: string): Promise<{ title: string; text: string }> {
-    const res = await fetch(url, {
-        headers: { "User-Agent": "RecallOS-Connector/1.0" },
-        signal: AbortSignal.timeout(25_000),
+/** Max response body we will buffer from a connector fetch (bytes). */
+const MAX_FETCH_BYTES = 2 * 1024 * 1024;
+
+async function safeFetchText(
+    rawUrl: string,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number }
+): Promise<string> {
+    const href = await assertSafeOutboundUrl(rawUrl);
+    const res = await fetch(href, {
+        headers: {
+            "User-Agent": "RecallOS-Connector/1.0",
+            ...(opts?.headers ?? {}),
+        },
+        redirect: "manual",
+        signal: AbortSignal.timeout(opts?.timeoutMs ?? 25_000),
     });
-    if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
-    const html = await res.text();
+
+    // Follow a single same-policy redirect after re-validating the Location
+    if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) throw new Error(`Redirect without Location (${res.status})`);
+        const next = await assertSafeOutboundUrl(new URL(loc, href).href);
+        const res2 = await fetch(next, {
+            headers: {
+                "User-Agent": "RecallOS-Connector/1.0",
+                ...(opts?.headers ?? {}),
+            },
+            redirect: "manual",
+            signal: AbortSignal.timeout(opts?.timeoutMs ?? 25_000),
+        });
+        if (!res2.ok) throw new Error(`Fetch failed ${res2.status}`);
+        if (res2.status >= 300 && res2.status < 400) {
+            throw new Error("Too many redirects");
+        }
+        const buf = Buffer.from(await res2.arrayBuffer());
+        if (buf.byteLength > MAX_FETCH_BYTES) throw new Error("Response too large");
+        return buf.toString("utf-8");
+    }
+
+    if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_FETCH_BYTES) throw new Error("Response too large");
+    return buf.toString("utf-8");
+}
+
+async function fetchUrlText(url: string): Promise<{ title: string; text: string }> {
+    const html = await safeFetchText(url);
     const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
     const title = titleMatch?.[1]?.trim() || url;
     // crude HTML → text
@@ -218,12 +333,7 @@ async function syncUrl(userId: string, config: ConnectorConfig, tags: string[]):
 async function syncRss(userId: string, config: ConnectorConfig, tags: string[]): Promise<number> {
     const feedUrl = config.feedUrl || config.url;
     if (!feedUrl) throw new Error("feedUrl required");
-    const res = await fetch(feedUrl, {
-        headers: { "User-Agent": "RecallOS-Connector/1.0" },
-        signal: AbortSignal.timeout(25_000),
-    });
-    if (!res.ok) throw new Error(`RSS fetch failed ${res.status}`);
-    const xml = await res.text();
+    const xml = await safeFetchText(feedUrl);
     const items = [...xml.matchAll(/<item[\s\S]*?<\/item>/gi)].slice(0, config.maxItems ?? 5);
     const entries =
         items.length > 0
@@ -265,11 +375,29 @@ async function syncRss(userId: string, config: ConnectorConfig, tags: string[]):
     return created;
 }
 
+function isAllowedGithubDownloadUrl(raw: string): boolean {
+    try {
+        const u = new URL(raw);
+        if (u.protocol !== "https:") return false;
+        const host = u.hostname.toLowerCase();
+        return (
+            host === "raw.githubusercontent.com" ||
+            host === "githubusercontent.com" ||
+            host.endsWith(".githubusercontent.com") ||
+            host === "objects.githubusercontent.com"
+        );
+    } catch {
+        return false;
+    }
+}
+
 async function syncGithub(userId: string, config: ConnectorConfig, tags: string[]): Promise<number> {
-    const repo = config.repo;
-    if (!repo || !repo.includes("/")) throw new Error("repo must be owner/name");
+    const repo = validateGithubRepo(String(config.repo ?? ""));
     const branch = config.branch || "main";
-    const path = (config.path || "").replace(/^\//, "");
+    if (!/^[a-zA-Z0-9._/-]+$/.test(branch) || branch.includes("..")) {
+        throw new Error("Invalid GitHub branch");
+    }
+    const path = validateGithubPath(config.path || "");
     const headers: Record<string, string> = {
         Accept: "application/vnd.github+json",
         "User-Agent": "RecallOS-Connector/1.0",
@@ -280,8 +408,16 @@ async function syncGithub(userId: string, config: ConnectorConfig, tags: string[
         ? `https://api.github.com/repos/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`
         : `https://api.github.com/repos/${repo}/contents?ref=${encodeURIComponent(branch)}`;
 
-    const res = await fetch(api, { headers, signal: AbortSignal.timeout(25_000) });
-    if (!res.ok) throw new Error(`GitHub API ${res.status}: ${await res.text()}`);
+    // GitHub API is a fixed public host — still use timeout + size cap
+    const res = await fetch(api, {
+        headers,
+        signal: AbortSignal.timeout(25_000),
+        redirect: "error",
+    });
+    if (!res.ok) {
+        const body = (await res.text()).slice(0, 200);
+        throw new Error(`GitHub API ${res.status}: ${body}`);
+    }
     const data = (await res.json()) as
         | { type: string; name: string; path: string; download_url?: string }[]
         | { type: string; name: string; path: string; download_url?: string; content?: string; encoding?: string };
@@ -294,18 +430,22 @@ async function syncGithub(userId: string, config: ConnectorConfig, tags: string[
     let created = 0;
     for (const f of textFiles) {
         let text = "";
-        if (f.download_url) {
-            const r = await fetch(f.download_url, {
-                headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
-                signal: AbortSignal.timeout(20_000),
-            });
-            if (!r.ok) continue;
-            text = (await r.text()).slice(0, 80_000);
+        if (f.download_url && isAllowedGithubDownloadUrl(f.download_url)) {
+            try {
+                text = (
+                    await safeFetchText(f.download_url, {
+                        headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
+                        timeoutMs: 20_000,
+                    })
+                ).slice(0, 80_000);
+            } catch {
+                continue;
+            }
         }
         if (text.length < 20) continue;
         const id = await ingestTextDocument({
             userId,
-            title: `${repo}:${f.path}`,
+            title: `${repo}:${f.path}`.slice(0, 240),
             text,
             tags: [...tags, "github", repo],
             sourceKey: "github",

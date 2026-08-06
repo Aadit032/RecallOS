@@ -55,7 +55,7 @@ chatRouter.get("/", async (req, res) => {
 
     const limitSchema = z.object({
         limit: z.coerce.number().int().min(1).max(50).default(20),
-        cursor: z.string().uuid().optional(),
+        cursor: z.string().uuid().optional()
     });
     const parsed = limitSchema.safeParse(req.query);
     if (!parsed.success) {
@@ -87,7 +87,7 @@ chatRouter.get("/", async (req, res) => {
                 createdAt: true,
                 project: { select: { id: true, name: true } },
                 _count: { select: { messages: true } },
-            },
+            }
         });
 
         const hasMore = rows.length > limit;
@@ -97,15 +97,14 @@ chatRouter.get("/", async (req, res) => {
         const chats = page.map(({ _count, project, ...chat }) => ({
             ...chat,
             projectName: project?.name ?? null,
-            messageCount: _count.messages,
+            messageCount: _count.messages
         }));
 
         res.status(200).json({ chats, nextCursor, hasMore });
     } catch (e) {
         console.error("List chats error:", e);
         res.status(500).json({
-            message: "Failed to list chats",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to list chats"
         });
     }
 });
@@ -125,7 +124,7 @@ chatRouter.get("/:id", async (req, res) => {
                     select: { id: true, role: true, content: true, sourceChunks: true, createdAt: true },
                 },
                 project: { select: { id: true, name: true } },
-            },
+            }
         });
 
         if (!chat) {
@@ -139,8 +138,7 @@ chatRouter.get("/:id", async (req, res) => {
     } catch (e) {
         console.error(`[GET /chat/:id] Error for chat ${id}:`, e);
         res.status(500).json({
-            message: "Failed to get chat",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to get chat"
         });
     }
 });
@@ -174,7 +172,7 @@ chatRouter.patch("/:id", async (req, res) => {
 
         if (projectId !== undefined && projectId !== null) {
             const project = await prismaClient.project.findFirst({
-                where: { id: projectId, userId },
+                where: { id: projectId, userId }
             });
             if (!project) {
                 res.status(404).json({ message: "Project not found" });
@@ -189,7 +187,7 @@ chatRouter.patch("/:id", async (req, res) => {
                 ...rest,
                 ...(projectId !== undefined ? { projectId } : {}),
             },
-            include: { project: { select: { id: true, name: true } } },
+            include: { project: { select: { id: true, name: true } } }
         });
 
         console.log(`[PATCH /chat/:id] Updated chat: "${chat.title}"`);
@@ -197,8 +195,7 @@ chatRouter.patch("/:id", async (req, res) => {
     } catch (e) {
         console.error(`[PATCH /chat/:id] Error for chat ${id}:`, e);
         res.status(500).json({
-            message: "Failed to update chat",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to update chat"
         });
     }
 });
@@ -228,8 +225,7 @@ chatRouter.delete("/:id", async (req, res) => {
     } catch (e) {
         console.error(`[DELETE /chat/:id] Error:`, e);
         res.status(500).json({
-            message: "Failed to delete chat",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to delete chat"
         });
     }
 });
@@ -285,7 +281,7 @@ chatRouter.post("/message", async (req, res) => {
             chatId != null
                 ? await prismaClient.chat.findFirst({
                       where: { id: chatId, userId },
-                      include: { project: { select: { id: true, name: true, systemPrompt: true } } },
+                      include: { project: { select: { id: true, name: true, systemPrompt: true } } }
                   })
                 : null;
 
@@ -304,7 +300,7 @@ chatRouter.post("/message", async (req, res) => {
                     userId,
                     title: titleFromMessage(titleSeed),
                 },
-                include: { project: { select: { id: true, name: true, systemPrompt: true } } },
+                include: { project: { select: { id: true, name: true, systemPrompt: true } } }
             });
         } else {
             console.log(`[POST /message] Using existing chat: id=${chat.id}, title="${chat.title}", pin=${chat.pinned}, projectId=${chat.projectId ?? "none"}`);
@@ -328,7 +324,7 @@ chatRouter.post("/message", async (req, res) => {
                 metadata: {
                     chatId: resolvedChat.id,
                     projectId: resolvedChat.projectId ?? null,
-                },
+                }
             });
 
             await propagateAttributes(
@@ -357,7 +353,7 @@ chatRouter.post("/message", async (req, res) => {
                 chatId: resolvedChat.id,
                 role: "user",
                 content: message,
-            },
+            }
         });
         console.log(`[POST /message] User message persisted: id=${userMessage.id}`);
 
@@ -381,12 +377,12 @@ chatRouter.post("/message", async (req, res) => {
                     content: userMessage.content,
                     createdAt: userMessage.createdAt,
                 },
-                sources: [],
+                sources: []
             });
             writeSse(res, {
                 type: "status",
                 message: "Starting web research agent…",
-                mode: "web",
+                mode: "web"
             });
 
             let clientClosed = false;
@@ -429,7 +425,7 @@ chatRouter.post("/message", async (req, res) => {
                     writeSse(res, {
                         type: "status",
                         message: statusMessage,
-                        mode: "web",
+                        mode: "web"
                     });
 
                     writeSse(res, {
@@ -442,9 +438,9 @@ chatRouter.post("/message", async (req, res) => {
                         iteration: event.iteration,
                         enough: event.enough,
                         reasoning: event.reasoning,
-                        nextQuery: event.nextQuery,
+                        nextQuery: event.nextQuery
                     });
-                    },
+                    }
                 });
 
                 assistantText = agentResult.answer;
@@ -464,14 +460,14 @@ chatRouter.post("/message", async (req, res) => {
                         score: 1,
                         text: s.text.slice(0, 350),
                         url: s.url || undefined,
-                        title: s.title || undefined,
+                        title: s.title || undefined
                     }));
 
                 if (!clientClosed && !res.writableEnded) {
                     writeSse(res, {
                         type: "status",
                         message: "Streaming web answer…",
-                        mode: "web",
+                        mode: "web"
                     });
                     // Agent returns full text; send as one delta for the existing client stream handler
                     writeSse(res, { type: "delta", content: assistantText });
@@ -482,10 +478,7 @@ chatRouter.post("/message", async (req, res) => {
                 if (!clientClosed && !res.writableEnded) {
                     writeSse(res, {
                         type: "error",
-                        message:
-                            webErr instanceof Error
-                                ? webErr.message
-                                : "Web search agent failed",
+                        message: "Web search agent failed",
                     });
                 }
             }
@@ -495,7 +488,7 @@ chatRouter.post("/message", async (req, res) => {
                     if (!res.writableEnded) res.end();
                     rootSpan.update({
                         level: "ERROR",
-                        output: { error: "web-agent-failed" },
+                        output: { error: "web-agent-failed" }
                     });
                     return;
                 }
@@ -511,7 +504,7 @@ chatRouter.post("/message", async (req, res) => {
                     role: "assistant",
                     content: assistantText,
                     sourceChunks: sources,
-                },
+                }
             });
 
             await prismaClient.chat.update({
@@ -519,7 +512,7 @@ chatRouter.post("/message", async (req, res) => {
                 data: {
                     updatedAt: new Date(),
                     ...(shouldSetTitle ? { title } : {}),
-                },
+                }
             });
 
             if (!clientClosed && !res.writableEnded && !streamFailed) {
@@ -541,7 +534,7 @@ chatRouter.post("/message", async (req, res) => {
                         content: assistantMessage.content,
                         createdAt: assistantMessage.createdAt,
                     },
-                    sources,
+                    sources
                 });
             }
             if (!res.writableEnded) res.end();
@@ -562,7 +555,7 @@ chatRouter.post("/message", async (req, res) => {
                           usageDetails: tokenFields.usageDetails,
                           costDetails: tokenFields.costDetails,
                       }
-                    : {}),
+                    : {})
             });
             console.log(`[POST /message] Web agent done for chat ${resolvedChat.id}`);
             return;
@@ -585,12 +578,12 @@ chatRouter.post("/message", async (req, res) => {
                     content: userMessage.content,
                     createdAt: userMessage.createdAt,
                 },
-                sources: [],
+                sources: []
             });
             writeSse(res, {
                 type: "status",
                 message: "Starting multi-hop memory agent…",
-                mode: "agent",
+                mode: "agent"
             });
 
             let clientClosed = false;
@@ -614,7 +607,7 @@ chatRouter.post("/message", async (req, res) => {
                         writeSse(res, {
                             type: "status",
                             message: event.title,
-                            mode: "agent",
+                            mode: "agent"
                         });
                         writeSse(res, {
                             type: "agent_step",
@@ -626,9 +619,9 @@ chatRouter.post("/message", async (req, res) => {
                             iteration: event.iteration,
                             enough: event.enough,
                             reasoning: event.reasoning,
-                            nextQuery: event.nextQuery,
+                            nextQuery: event.nextQuery
                         });
-                    },
+                    }
                 });
 
                 assistantText = agentResult.answer;
@@ -649,7 +642,7 @@ chatRouter.post("/message", async (req, res) => {
                             content: userMessage.content,
                             createdAt: userMessage.createdAt,
                         },
-                        sources,
+                        sources
                     });
                     writeSse(res, { type: "delta", content: assistantText });
                 }
@@ -659,10 +652,7 @@ chatRouter.post("/message", async (req, res) => {
                 if (!clientClosed && !res.writableEnded) {
                     writeSse(res, {
                         type: "error",
-                        message:
-                            agentErr instanceof Error
-                                ? agentErr.message
-                                : "Memory agent failed",
+                        message: "Memory agent failed",
                     });
                 }
             }
@@ -685,7 +675,7 @@ chatRouter.post("/message", async (req, res) => {
                     role: "assistant",
                     content: assistantText,
                     sourceChunks: sources,
-                },
+                }
             });
 
             await prismaClient.chat.update({
@@ -693,7 +683,7 @@ chatRouter.post("/message", async (req, res) => {
                 data: {
                     updatedAt: new Date(),
                     ...(shouldSetTitle ? { title } : {}),
-                },
+                }
             });
 
             if (!clientClosed && !res.writableEnded && !streamFailed) {
@@ -715,7 +705,7 @@ chatRouter.post("/message", async (req, res) => {
                         content: assistantMessage.content,
                         createdAt: assistantMessage.createdAt,
                     },
-                    sources,
+                    sources
                 });
             }
             if (!res.writableEnded) res.end();
@@ -724,7 +714,7 @@ chatRouter.post("/message", async (req, res) => {
                 userId,
                 chatId: resolvedChat.id,
                 userMessage: message,
-                assistantMessage: assistantText,
+                assistantMessage: assistantText
             });
 
             const tokenFields = traceTokenUsageFields(turnTokenUsage);
@@ -738,7 +728,7 @@ chatRouter.post("/message", async (req, res) => {
                 metadata: { model: CHAT_MODEL, ...tokenFields.metadata },
                 ...("usageDetails" in tokenFields
                     ? { usageDetails: tokenFields.usageDetails, costDetails: tokenFields.costDetails }
-                    : {}),
+                    : {})
             });
             console.log(`[POST /message] Memory agent done for chat ${resolvedChat.id}`);
             return;
@@ -759,7 +749,7 @@ chatRouter.post("/message", async (req, res) => {
                         query: truncateForTrace(message, 300),
                         candidateCount: fusedChunks.length,
                         topK: RERANK_TOP_K,
-                    },
+                    }
                 });
                 const ranked = await crossEncodeRerank(
                     message,
@@ -770,7 +760,7 @@ chatRouter.post("/message", async (req, res) => {
                     output: {
                         resultCount: ranked.length,
                         topScores: ranked.map((c) => ({ id: c.id, score: c.score })),
-                    },
+                    }
                 });
                 return ranked;
             }
@@ -791,7 +781,7 @@ chatRouter.post("/message", async (req, res) => {
         (await prismaClient.message.findMany({
             where: { chatId: resolvedChat.id },
             orderBy: { createdAt: "desc" },
-            take: 20,
+            take: 20
         })).reverse();
         console.log(`[POST /message] History loaded: ${history.length} prior messages`);
 
@@ -799,7 +789,7 @@ chatRouter.post("/message", async (req, res) => {
             { role: "system" as const, content: await buildSystemPrompt(userId, resolvedChat.id, topChunks, projectSystemPrompt, userAgent) },
             ...history.map((m) => ({
                 role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
-                content: m.content,
+                content: m.content
             })),
         ];
         console.log(`[POST /message] LLM message array built: ${llmMessages.length} messages (1 system + ${history.length} history), projectPrompt=${Boolean(projectSystemPrompt)}, userAgent=${Boolean(userAgent)}`);
@@ -821,7 +811,7 @@ chatRouter.post("/message", async (req, res) => {
                 content: userMessage.content,
                 createdAt: userMessage.createdAt,
             },
-            sources,
+            sources
         });
 
         let clientClosed = false;
@@ -857,7 +847,7 @@ chatRouter.post("/message", async (req, res) => {
                             model: CHAT_MODEL,
                             messages: llmMessages,
                             stream: true,
-                        },
+                        }
                     });
 
                     let text = "";
@@ -899,10 +889,7 @@ chatRouter.post("/message", async (req, res) => {
             if (!clientClosed && !res.writableEnded) {
                 writeSse(res, {
                     type: "error",
-                    message:
-                        streamErr instanceof Error
-                            ? streamErr.message
-                            : "Failed to stream model response",
+                    message: "Failed to stream model response",
                 });
             }
         }
@@ -918,7 +905,7 @@ chatRouter.post("/message", async (req, res) => {
                 if (!res.writableEnded) res.end();
                 rootSpan.update({
                     level: "ERROR",
-                    output: { error: "stream-failed" },
+                    output: { error: "stream-failed" }
                 });
                 return;
             }
@@ -935,7 +922,7 @@ chatRouter.post("/message", async (req, res) => {
                 role: "assistant",
                 content: assistantText,
                 sourceChunks: sources,
-            },
+            }
         });
         console.log(`[POST /message] Assistant message persisted: id=${assistantMessage.id}`);
 
@@ -946,7 +933,7 @@ chatRouter.post("/message", async (req, res) => {
                 updatedAt: new Date(),
                 ...(shouldSetTitle ? { title } : {}),
             },
-            select: { lastSummaryCount: true, summary: true },
+            select: { lastSummaryCount: true, summary: true }
         });
 
         if (!clientClosed && !res.writableEnded && !streamFailed) {
@@ -968,7 +955,7 @@ chatRouter.post("/message", async (req, res) => {
                     content: assistantMessage.content,
                     createdAt: assistantMessage.createdAt,
                 },
-                sources,
+                sources
             });
         }
         if (!res.writableEnded) res.end();
@@ -994,7 +981,7 @@ chatRouter.post("/message", async (req, res) => {
                       usageDetails: tokenFields.usageDetails,
                       costDetails: tokenFields.costDetails,
                   }
-                : {}),
+                : {})
         });
 
         // Summarize + extract long-term memories after the client has the full answer
@@ -1003,13 +990,13 @@ chatRouter.post("/message", async (req, res) => {
             userId,
             chatId: resolvedChat.id,
             userMessage: message,
-            assistantMessage: assistantText,
+            assistantMessage: assistantText
         });
         try {
             const messagesToSummarize = await prismaClient.message.findMany({
                 where: { chatId: resolvedChat.id },
                 orderBy: { createdAt: "asc" },
-                skip: msgs.lastSummaryCount,
+                skip: msgs.lastSummaryCount
             });
 
             const N = 100;
@@ -1022,7 +1009,7 @@ chatRouter.post("/message", async (req, res) => {
                     data: {
                         summary,
                         lastSummaryCount: msgs.lastSummaryCount + messagesToSummarize.length,
-                    },
+                    }
                 });
             }
         } catch (summaryErr) {
@@ -1038,7 +1025,7 @@ chatRouter.post("/message", async (req, res) => {
                 res.write(
                     `data: ${JSON.stringify({
                         type: "error",
-                        message: e instanceof Error ? e.message : "Failed to process chat message",
+                        message: "Failed to process chat message",
                     })}\n\n`
                 );
                 res.end();
@@ -1046,8 +1033,7 @@ chatRouter.post("/message", async (req, res) => {
             return;
         }
         res.status(500).json({
-            message: "Failed to process chat message",
-            error: e instanceof Error ? e.message : e,
+            message: "Failed to process chat message"
         });
     }
 });

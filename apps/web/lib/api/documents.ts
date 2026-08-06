@@ -62,23 +62,43 @@ export async function deleteDocument(id: string): Promise<void> {
   })
 }
 
+function guessContentType(file: File): string {
+  if (file.type && file.type.trim()) return file.type
+  const name = file.name.toLowerCase()
+  if (name.endsWith(".pdf")) return "application/pdf"
+  if (name.endsWith(".png")) return "image/png"
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg"
+  if (name.endsWith(".webp")) return "image/webp"
+  if (name.endsWith(".gif")) return "image/gif"
+  if (name.endsWith(".mp3")) return "audio/mpeg"
+  if (name.endsWith(".wav")) return "audio/wav"
+  if (name.endsWith(".m4a")) return "audio/mp4"
+  if (name.endsWith(".mp4")) return "video/mp4"
+  if (name.endsWith(".webm")) return "video/webm"
+  if (name.endsWith(".mov")) return "video/quicktime"
+  if (name.endsWith(".txt") || name.endsWith(".md")) return "text/plain"
+  return "application/pdf"
+}
+
 export async function uploadDocument(
   file: File,
   tags: string[] = [],
   onStatus?: (status: string) => void
 ): Promise<{ documentId: string }> {
+  const contentType = guessContentType(file)
   onStatus?.("Requesting upload URL…")
   const {
-    data: { presignedUrl, key },
+    data: { presignedUrl, key, contentType: signedType },
   } = await axios.post(
     `${API_BASE_UPLOAD}/post-file-url`,
-    { fileName: file.name, contentType: file.type },
+    { fileName: file.name, contentType, size: file.size },
     { headers: authHeaders() }
   )
 
+  const putType = (signedType as string | undefined) || contentType
   onStatus?.("Uploading file…")
   const res = await axios.put(presignedUrl, file, {
-    headers: { "Content-Type": file.type },
+    headers: { "Content-Type": putType },
   })
 
   if (res.status !== 200) {
@@ -92,7 +112,7 @@ export async function uploadDocument(
       fileName: file.name,
       key,
       size: file.size,
-      contentType: file.type,
+      contentType: putType,
       tags,
     },
     { headers: authHeaders() }

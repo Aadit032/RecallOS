@@ -48,7 +48,7 @@ downloadRouter.post("/get-download-url", async (req, res) => {
         res.status(200).json({ presignedUrl });
     }catch(e){
         console.error(`[download:get-download-url] Server error:`, e);
-        res.status(500).json({ message: "Server error while getting presigned url for downloading." + e })
+        res.status(500).json({ message: "Server error while getting presigned url for downloading." });
     }
 });
 
@@ -61,8 +61,16 @@ downloadRouter.get("/list", async (req, res) => {
         return;
     } 
 
-    const limit = Math.min(Number(req.query.limit) || 10, 50);
-    const cursor = req.query.cursor as string | undefined
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
+    const cursorRaw = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+    // Only accept UUID cursors to avoid Prisma errors / odd input
+    const cursor =
+        cursorRaw &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            cursorRaw
+        )
+            ? cursorRaw
+            : undefined;
     console.log(`[download:list] Params: limit=${limit}, cursor=${cursor ?? "none"}`);
 
     try {
@@ -185,9 +193,9 @@ downloadRouter.delete("/:id", async (req, res) => {
         res.status(200).json({ message: "Document deleted" });
     } catch (e) {
         console.error(`[download:delete] Error:`, e);
+        console.error(`[download:delete] Error detail:`, e);
         res.status(500).json({
             message: "Failed to delete document",
-            error: e instanceof Error ? e.message : e,
         });
     }
 });
